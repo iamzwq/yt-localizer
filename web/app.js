@@ -118,7 +118,8 @@ async function prepare() {
     state.currentIndex = -1;
 
     $("player").src = data.video_url;
-    $("meta").textContent = `标题：${data.title}　语言：${data.lang}　来源：${data.kind}　字幕：${state.cues.length} 条`;
+    $("meta").textContent =
+      `标题：${data.title}　语言：${data.lang}　来源：${data.kind}　字幕：${state.cues.length} 条`;
     $("workspace").classList.remove("hidden");
 
     const base = `/api/srt/${data.job_id}`;
@@ -127,7 +128,9 @@ async function prepare() {
     $("srt-bilingual").href = `${base}?mode=bilingual`;
 
     applyOverlayStyle();
-    setStatus(data.warning ? `已准备（注意：${data.warning}）` : "已准备完成，可预览与下载。");
+    setStatus(
+      data.warning ? `已准备（注意：${data.warning}）` : "已准备完成，可预览与下载。",
+    );
   } catch (err) {
     setStatus(err.message, true);
   } finally {
@@ -186,7 +189,7 @@ function bindEvents() {
     applyOverlayStyle();
   });
   ["text-color", "bg-color"].forEach((id) =>
-    $(id).addEventListener("input", applyOverlayStyle)
+    $(id).addEventListener("input", applyOverlayStyle),
   );
   window.addEventListener("resize", applyOverlayStyle);
 

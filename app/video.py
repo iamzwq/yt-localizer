@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
+from .ytdlp_opts import base_ydl_opts
+
 
 @dataclass
 class DownloadedVideo:
@@ -25,11 +27,10 @@ def download_video(
 
     outtmpl = output or os.path.join(output_dir, "%(id)s.%(ext)s")
     opts = {
+        **base_ydl_opts(),
         "format": fmt,
         "merge_output_format": merge_format,
         "outtmpl": outtmpl,
-        "quiet": True,
-        "no_warnings": True,
     }
 
     with yt_dlp.YoutubeDL(opts) as ydl:

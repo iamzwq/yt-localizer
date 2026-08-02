@@ -9,6 +9,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from .ytdlp_opts import USER_AGENT, base_ydl_opts
+
 
 class SubtitleNotFoundError(Exception):
     """视频没有可用的 json3 字幕轨。"""
@@ -84,7 +86,10 @@ def select_caption_track(
 
 
 def _http_get(url: str, timeout: int = 30) -> str:
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.9"},
+    )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read().decode("utf-8", errors="replace")
 
@@ -94,12 +99,11 @@ def fetch_subtitle(url: str, prefer_lang: Optional[str] = None) -> FetchedSubtit
     import yt_dlp  # 延迟导入，便于纯函数单测无需安装 yt-dlp
 
     ydl_opts = {
+        **base_ydl_opts(),
         "skip_download": True,
         "writesubtitles": True,
         "writeautomaticsub": True,
         "subtitlesformat": "json3",
-        "quiet": True,
-        "no_warnings": True,
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
