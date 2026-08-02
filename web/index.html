@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>YouTube 视频中文化工具</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      /* 字幕叠层字体：霞鹜文楷等宽，缺失降级系统默认。 */
+      #subtitle-overlay {
+        font-family: "LXGW WenKai Mono", "LXGW WenKai", monospace;
+      }
+    </style>
+  </head>
+  <body class="min-h-screen bg-slate-900 text-slate-100">
+    <div class="mx-auto max-w-5xl px-4 py-8">
+      <h1 class="mb-6 text-2xl font-semibold">YouTube 视频中文化工具</h1>
+
+      <!-- 输入区 -->
+      <section class="mb-6 rounded-lg bg-slate-800 p-4">
+        <div class="flex flex-col gap-3 sm:flex-row">
+          <input
+            id="url-input"
+            type="text"
+            placeholder="粘贴 YouTube 视频链接…"
+            class="flex-1 rounded border border-slate-600 bg-slate-900 px-3 py-2 outline-none focus:border-sky-500"
+          />
+          <label class="flex items-center gap-2 text-sm">
+            <input id="translate-check" type="checkbox" checked />
+            翻译成中文
+          </label>
+          <button
+            id="prepare-btn"
+            class="rounded bg-sky-600 px-5 py-2 font-medium hover:bg-sky-500 disabled:opacity-50"
+          >
+            准备
+          </button>
+        </div>
+        <p id="status" class="mt-3 text-sm text-slate-400"></p>
+      </section>
+
+      <!-- 工作区 -->
+      <section id="workspace" class="hidden">
+        <div class="grid gap-6 lg:grid-cols-3">
+          <!-- 预览 -->
+          <div class="lg:col-span-2">
+            <div
+              id="video-wrap"
+              class="relative overflow-hidden rounded-lg bg-black"
+            >
+              <video id="player" class="w-full" controls></video>
+              <div
+                id="subtitle-overlay"
+                class="pointer-events-none absolute bottom-6 left-1/2 hidden max-w-[92%] -translate-x-1/2 whitespace-pre-wrap text-center leading-snug"
+              ></div>
+            </div>
+            <p id="meta" class="mt-2 text-sm text-slate-400"></p>
+          </div>
+
+          <!-- 样式与下载 -->
+          <div class="space-y-5">
+            <div class="rounded-lg bg-slate-800 p-4">
+              <h2 class="mb-3 text-sm font-semibold text-slate-300">字幕样式</h2>
+
+              <label class="mb-3 block text-xs text-slate-400">
+                预览显示
+                <select
+                  id="preview-mode"
+                  class="mt-1 w-full rounded border border-slate-600 bg-slate-900 px-2 py-1 text-slate-100"
+                >
+                  <option value="bilingual">双语</option>
+                  <option value="translated" selected>中文</option>
+                  <option value="original">原文</option>
+                </select>
+              </label>
+
+              <label class="mb-3 block text-xs text-slate-400">
+                字号 <span id="font-size-val">42</span>
+                <input
+                  id="font-size"
+                  type="range"
+                  min="16"
+                  max="72"
+                  value="42"
+                  class="w-full"
+                />
+              </label>
+
+              <label class="mb-3 block text-xs text-slate-400">
+                文字颜色
+                <input id="text-color" type="color" value="#ffffff" class="ml-2 align-middle" />
+              </label>
+
+              <label class="mb-3 block text-xs text-slate-400">
+                背景颜色
+                <input id="bg-color" type="color" value="#000000" class="ml-2 align-middle" />
+              </label>
+
+              <label class="mb-1 block text-xs text-slate-400">
+                背景不透明度 <span id="bg-opacity-val">0.6</span>
+                <input
+                  id="bg-opacity"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value="0.6"
+                  class="w-full"
+                />
+              </label>
+            </div>
+
+            <div class="rounded-lg bg-slate-800 p-4">
+              <h2 class="mb-3 text-sm font-semibold text-slate-300">下载字幕 (SRT)</h2>
+              <div class="flex flex-wrap gap-2">
+                <a id="srt-original" class="srt-link rounded bg-slate-700 px-3 py-1.5 text-sm hover:bg-slate-600" href="#">原文</a>
+                <a id="srt-translated" class="srt-link rounded bg-slate-700 px-3 py-1.5 text-sm hover:bg-slate-600" href="#">中文</a>
+                <a id="srt-bilingual" class="srt-link rounded bg-slate-700 px-3 py-1.5 text-sm hover:bg-slate-600" href="#">双语</a>
+              </div>
+            </div>
+
+            <div class="rounded-lg bg-slate-800 p-4">
+              <h2 class="mb-3 text-sm font-semibold text-slate-300">导出视频</h2>
+              <label class="mb-3 block text-xs text-slate-400">
+                烧录字幕
+                <select
+                  id="burn-sub-mode"
+                  class="mt-1 w-full rounded border border-slate-600 bg-slate-900 px-2 py-1 text-slate-100"
+                >
+                  <option value="translated" selected>中文</option>
+                  <option value="bilingual">双语</option>
+                </select>
+              </label>
+              <div class="flex flex-col gap-2">
+                <button id="export-original" class="rounded bg-emerald-600 px-3 py-2 text-sm hover:bg-emerald-500 disabled:opacity-50">
+                  字幕 + 原声
+                </button>
+                <button id="export-dub" class="rounded bg-emerald-600 px-3 py-2 text-sm hover:bg-emerald-500 disabled:opacity-50">
+                  字幕 + 中文配音
+                </button>
+              </div>
+              <p id="export-status" class="mt-2 text-xs text-slate-400"></p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

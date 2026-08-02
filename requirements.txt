@@ -1,0 +1,9 @@
+# 运行时依赖（后续阶段逐步接入）
+yt-dlp          # 下载视频与 json3 字幕
+fastapi         # 本地后端接口
+uvicorn         # ASGI 运行
+httpx           # 调用 deepseek
+edge-tts        # 中文 TTS 配音
+
+# 开发依赖
+pytest
