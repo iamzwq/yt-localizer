@@ -20,7 +20,7 @@ from .burn import burn_subtitles
 from .fetch import SubtitleNotFoundError, fetch_subtitle
 from .srt import MODE_BILINGUAL, MODE_ORIGINAL, MODE_TRANSLATED, build_srt
 from .subtitle import format_subtitles, prepare_timed_text_events
-from .translate import translate_cues
+from .translate import DEFAULT_MODEL, translate_cues
 from .tts import build_dub_track, mux_dub_video
 from .video import download_video
 
@@ -96,7 +96,7 @@ def prepare(req: PrepareRequest):
     warning = None
     if req.translate:
         try:
-            translate_cues(cues, model=req.model or "deepseek-chat")
+            translate_cues(cues, model=req.model or DEFAULT_MODEL)
         except ValueError as err:
             warning = str(err)  # 缺 API Key：保留原文，前端提示
 

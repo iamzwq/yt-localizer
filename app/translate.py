@@ -12,11 +12,16 @@ import re
 import urllib.request
 from typing import Any, Callable, Dict, List, Optional
 
+from . import config  # noqa: F401  导入即加载 .env
+
 Cue = Dict[str, Any]
 CallLLM = Callable[[List[Dict[str, str]]], str]
 
-DEFAULT_MODEL = "deepseek-chat"
-DEFAULT_BASE_URL = "https://api.deepseek.com/chat/completions"
+# 模型与接口地址支持 .env 配置（DEEPSEEK_MODEL / DEEPSEEK_BASE_URL）。
+DEFAULT_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
+DEFAULT_BASE_URL = os.environ.get(
+    "DEEPSEEK_BASE_URL", "https://api.deepseek.com/chat/completions"
+)
 
 _FENCE_OPEN_RE = re.compile(r"^```[a-zA-Z0-9]*\n")
 _FENCE_CLOSE_RE = re.compile(r"\n```$")
