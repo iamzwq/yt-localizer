@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional
 
 Cue = Dict[str, Any]
@@ -125,6 +126,7 @@ def build_dub_track(
     synth: Optional[Callable[[str, str], None]] = None,
     probe: Optional[Callable[[str], int]] = None,
     progress: Optional[Callable[[int, int], None]] = None,
+    concurrency: int = 4,
 ) -> str:
     """合成整条配音音轨并对齐到视频时间轴。
 
@@ -138,25 +140,30 @@ def build_dub_track(
     probe = probe or (lambda path: probe_duration_ms(path, ffprobe))
 
     tmp = workdir or tempfile.mkdtemp(prefix="dub_")
-    clip_paths: List[Optional[str]] = []
-    durations: List[float] = []
     total = len(cues)
-    for i, cue in enumerate(cues):
-        text = _cue_dub_text(cue)
-        if text:
-            clip = os.path.join(tmp, f"clip_{i:05d}.mp3")
-            try:
-                synth(text, clip)
-                clip_paths.append(clip)
-                durations.append(probe(clip))
-            except Exception:  # noqa: BLE001 - 单句合成失败降级为静音，不中断整体
-                clip_paths.append(None)
-                durations.append(0)
-        else:
-            clip_paths.append(None)
-            durations.append(0)
-        if progress:
-            progress(i + 1, total)
+
+    def _one(i: int) -> tuple:
+        text = _cue_dub_text(cues[i])
+        if not text:
+            return i, None, 0
+        clip = os.path.join(tmp, f"clip_{i:05d}.mp3")
+        try:
+            synth(text, clip)
+            return i, clip, probe(clip)
+        except Exception:  # noqa: BLE001 - 单句合成失败降级为静音，不中断整体
+            return i, None, 0
+
+    clip_paths: List[Optional[str]] = [None] * total
+    durations: List[float] = [0] * total
+    done = 0
+    # edge-tts 是网络 IO，多句并发可大幅缩短合成耗时。
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as ex:
+        for i, clip, dur in ex.map(_one, range(total)):
+            clip_paths[i] = clip
+            durations[i] = dur
+            done += 1
+            if progress:
+                progress(done, total)
 
     segments = plan_dub_timeline(cues, durations, max_speedup=max_speedup)
 

@@ -86,15 +86,6 @@ function renderStage(scope, msg) {
   setBar(scope, text, pct);
 }
 
-function downloadFile(url) {
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-}
-
 function getStyle() {
   return {
     font_name: "LXGW WenKai Mono",
@@ -230,6 +221,8 @@ async function exportVideo(mode) {
   if (!state.jobId) return;
   const btnIds = ["export-original", "export-dub", "export-both"];
   btnIds.forEach((id) => ($(id).disabled = true));
+  $("export-links").classList.add("hidden");
+  $("export-links").innerHTML = "";
   setBar("export", "开始…", 0);
 
   let result = null;
@@ -252,17 +245,37 @@ async function exportVideo(mode) {
       else if (msg.stage === "error") throw new Error(msg.detail);
       else renderStage("export", msg);
     });
-    const urls = Object.values((result && result.videos) || {});
-    if (!urls.length) throw new Error("未生成视频");
-    // 连续多个程序化下载会被浏览器拦截，逐个间隔触发。
-    urls.forEach((url, i) => setTimeout(() => downloadFile(url), i * 800));
-    $("export-status").textContent = `完成，已开始下载 ${urls.length} 个视频。`;
+    const videos = (result && result.videos) || {};
+    if (!Object.keys(videos).length) throw new Error("未生成视频");
+    renderExportLinks(videos);
+    $("export-status").textContent = "合成完成，点击下方链接下载。";
   } catch (err) {
     $("export-status").textContent = err.message;
   } finally {
     btnIds.forEach((id) => ($(id).disabled = false));
     hideBar("export");
   }
+}
+
+const VIDEO_LABELS = {
+  original: "下载：字幕 + 原声",
+  dub: "下载：字幕 + 中文配音",
+};
+
+// 多文件自动下载会被浏览器拦截，改为渲染可点击的下载链接。
+function renderExportLinks(videos) {
+  const box = $("export-links");
+  box.innerHTML = "";
+  Object.entries(videos).forEach(([key, url]) => {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "";
+    a.textContent = VIDEO_LABELS[key] || `下载 ${key}`;
+    a.className =
+      "block rounded bg-sky-700 px-3 py-2 text-center text-sm hover:bg-sky-600";
+    box.appendChild(a);
+  });
+  box.classList.remove("hidden");
 }
 
 async function clearCache() {

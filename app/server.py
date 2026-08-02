@@ -148,6 +148,34 @@ def _ensure_burned(job: dict, sub_mode: str, style: SubtitleStyle, q: "queue.Que
     return out
 
 
+def _ensure_dub(job: dict, burned: str, sub_mode: str, style: SubtitleStyle, q: "queue.Queue") -> str:
+    """生成配音成片，并缓存音轨与合成结果，避免重复 TTS 与合成。
+
+    - 配音音轨（dub.m4a）只与 cues 相关，生成一次后复用。
+    - 合成视频（video_dub.mp4）依赖烧录画面（sub_mode+样式），签名未变则复用。
+    """
+    dub_audio = os.path.join(job["dir"], "dub.m4a")
+    if not os.path.exists(dub_audio):
+        q.put({"stage": "tts", "done": 0, "total": len(job["cues"])})
+        duration_ms = int((job["meta"].get("duration") or 0) * 1000) or None
+        build_dub_track(
+            job["cues"],
+            dub_audio,
+            total_duration_ms=duration_ms,
+            progress=lambda done, total: q.put({"stage": "tts", "done": done, "total": total}),
+        )
+
+    sig = (sub_mode, dataclasses.astuple(style))
+    out = os.path.join(job["dir"], "video_dub.mp4")
+    cached = job.get("dub_video")
+    if cached and cached["sig"] == sig and os.path.exists(out):
+        return out
+    q.put({"stage": "mux"})
+    mux_dub_video(burned, dub_audio, out)
+    job["dub_video"] = {"sig": sig, "path": out}
+    return out
+
+
 @app.post("/api/prepare")
 def prepare(req: PrepareRequest):
     import hashlib
@@ -332,18 +360,7 @@ def make_video(job_id: str, req: VideoRequest):
             if req.mode in ("original", "both"):
                 videos["original"] = _media_url(job_id, burned)
             if req.mode in ("dub", "both"):
-                q.put({"stage": "tts", "done": 0, "total": len(job["cues"])})
-                duration_ms = int((job["meta"].get("duration") or 0) * 1000) or None
-                dub = build_dub_track(
-                    job["cues"],
-                    os.path.join(job["dir"], "dub.m4a"),
-                    total_duration_ms=duration_ms,
-                    progress=lambda done, total: q.put(
-                        {"stage": "tts", "done": done, "total": total}
-                    ),
-                )
-                q.put({"stage": "mux"})
-                out = mux_dub_video(burned, dub, os.path.join(job["dir"], "video_dub.mp4"))
+                out = _ensure_dub(job, burned, req.sub_mode, style, q)
                 videos["dub"] = _media_url(job_id, out)
             q.put({"stage": "done", "result": {"videos": videos}})
         except Exception as err:  # noqa: BLE001
