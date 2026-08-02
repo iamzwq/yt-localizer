@@ -16,6 +16,79 @@ function setStatus(msg, isError = false) {
   el.className = `mt-3 text-sm ${isError ? "text-rose-400" : "text-slate-400"}`;
 }
 
+// 阶段标签：SSE 事件 stage -> 中文文案
+const STAGE_LABELS = {
+  prepare: {
+    download: "下载视频",
+    subtitle: "获取字幕",
+    segment: "断句",
+    translate: "翻译",
+  },
+  export: { burn: "烧录字幕", tts: "合成配音", mux: "合成视频" },
+};
+
+// 逐条读取 text/event-stream，onMessage 里抛错会中断并向上传播。
+async function readSSE(res, onMessage) {
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf("\n\n")) >= 0) {
+      const raw = buf.slice(0, idx).trim();
+      buf = buf.slice(idx + 2);
+      if (raw.startsWith("data:")) onMessage(JSON.parse(raw.slice(5).trim()));
+    }
+  }
+}
+
+function setBar(scope, text, pct) {
+  const bar = $(`${scope}-bar`);
+  $(`${scope}-progress`).classList.remove("hidden");
+  if (scope === "prepare") $("prepare-progress-text").textContent = text || "";
+  else $("export-status").textContent = text || "";
+  if (pct == null) {
+    bar.style.width = "100%";
+    bar.classList.add("animate-pulse");
+  } else {
+    bar.classList.remove("animate-pulse");
+    bar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+  }
+}
+
+function hideBar(scope) {
+  $(`${scope}-progress`).classList.add("hidden");
+  const bar = $(`${scope}-bar`);
+  bar.classList.remove("animate-pulse");
+  bar.style.width = "0%";
+}
+
+function renderStage(scope, msg) {
+  const label = (STAGE_LABELS[scope] || {})[msg.stage] || msg.stage;
+  let text = `${label}…`;
+  let pct = null;
+  if (msg.stage === "download" && msg.pct != null) {
+    text = `下载视频 ${msg.pct}%`;
+    pct = msg.pct;
+  } else if (msg.stage === "translate" && msg.total) {
+    text = `翻译 ${msg.done}/${msg.total}`;
+    pct = Math.round((msg.done * 100) / msg.total);
+  }
+  setBar(scope, text, pct);
+}
+
+function downloadFile(url) {
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
 function getStyle() {
   return {
     font_name: "LXGW WenKai Mono",
@@ -102,49 +175,60 @@ async function prepare() {
   if (!url) return setStatus("请输入视频链接", true);
 
   $("prepare-btn").disabled = true;
-  setStatus("正在下载视频与字幕、断句、翻译…（较慢，请耐心等待）");
+  setStatus("");
+  setBar("prepare", "开始…", 0);
 
+  let result = null;
   try {
     const res = await fetch("/api/prepare", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url, translate: $("translate-check").checked }),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || "准备失败");
+    if (!res.ok || !res.body) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || "准备失败");
+    }
+    await readSSE(res, (msg) => {
+      if (msg.stage === "done") result = msg.result;
+      else if (msg.stage === "error") throw new Error(msg.detail);
+      else renderStage("prepare", msg);
+    });
+    if (!result) throw new Error("未收到结果");
 
-    state.jobId = data.job_id;
-    state.cues = data.cues || [];
+    state.jobId = result.job_id;
+    state.cues = result.cues || [];
     state.currentIndex = -1;
 
-    $("player").src = data.video_url;
+    $("player").src = result.video_url;
     $("meta").textContent =
-      `标题：${data.title}　语言：${data.lang}　来源：${data.kind}　字幕：${state.cues.length} 条`;
+      `标题：${result.title}　语言：${result.lang}　来源：${result.kind}　字幕：${state.cues.length} 条`;
     $("workspace").classList.remove("hidden");
 
-    const base = `/api/srt/${data.job_id}`;
+    const base = `/api/srt/${result.job_id}`;
     $("srt-original").href = `${base}?mode=original`;
     $("srt-translated").href = `${base}?mode=translated`;
     $("srt-bilingual").href = `${base}?mode=bilingual`;
 
     applyOverlayStyle();
     setStatus(
-      data.warning ? `已准备（注意：${data.warning}）` : "已准备完成，可预览与下载。",
+      result.warning ? `已准备（注意：${result.warning}）` : "已准备完成，可预览与下载。",
     );
   } catch (err) {
     setStatus(err.message, true);
   } finally {
     $("prepare-btn").disabled = false;
+    hideBar("prepare");
   }
 }
 
 async function exportVideo(mode) {
   if (!state.jobId) return;
-  const btnIds = ["export-original", "export-dub"];
+  const btnIds = ["export-original", "export-dub", "export-both"];
   btnIds.forEach((id) => ($(id).disabled = true));
-  $("export-status").textContent =
-    mode === "dub" ? "正在生成配音视频（烧录 + TTS + 合成，较慢）…" : "正在烧录字幕视频…";
+  setBar("export", "开始…", 0);
 
+  let result = null;
   try {
     const res = await fetch(`/api/video/${state.jobId}`, {
       method: "POST",
@@ -155,20 +239,24 @@ async function exportVideo(mode) {
         style: getStyle(),
       }),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || "合成失败");
-
-    const a = document.createElement("a");
-    a.href = data.video_url;
-    a.download = "";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    $("export-status").textContent = "完成，已开始下载。";
+    if (!res.ok || !res.body) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || "合成失败");
+    }
+    await readSSE(res, (msg) => {
+      if (msg.stage === "done") result = msg.result;
+      else if (msg.stage === "error") throw new Error(msg.detail);
+      else renderStage("export", msg);
+    });
+    const urls = Object.values((result && result.videos) || {});
+    if (!urls.length) throw new Error("未生成视频");
+    urls.forEach(downloadFile);
+    $("export-status").textContent = `完成，已开始下载 ${urls.length} 个视频。`;
   } catch (err) {
     $("export-status").textContent = err.message;
   } finally {
     btnIds.forEach((id) => ($(id).disabled = false));
+    hideBar("export");
   }
 }
 
@@ -195,6 +283,7 @@ function bindEvents() {
 
   $("export-original").addEventListener("click", () => exportVideo("original"));
   $("export-dub").addEventListener("click", () => exportVideo("dub"));
+  $("export-both").addEventListener("click", () => exportVideo("both"));
 }
 
 bindEvents();

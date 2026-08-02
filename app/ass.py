@@ -21,6 +21,7 @@ class SubtitleStyle:
     bg_opacity: float = 0.6  # 背景框不透明度 0~1
     outline: float = 4.0  # BorderStyle=3 下即背景框的内边距
     margin_v: int = 40
+    margin_h: int = 20  # 左右边距，越小字幕可用宽度越大
     play_res_y: int = 720
     bold: bool = False
 
@@ -77,7 +78,7 @@ def build_ass(
         "ScriptType: v4.00+",
         f"PlayResX: {play_res_x}",
         f"PlayResY: {play_res_y}",
-        "WrapStyle: 2",
+        "WrapStyle: 0",  # 智能均衡自动换行（原 2 = 不自动换行，长句会溢出）
         "ScaledBorderAndShadow: yes",
         "",
         "[V4+ Styles]",
@@ -91,7 +92,7 @@ def build_ass(
         (
             f"Style: Default,{style.font_name},{style.font_size},{primary},"
             f"&H000000FF,{back},{back},{bold},0,0,0,100,100,0,0,3,"
-            f"{style.outline},0,2,40,40,{style.margin_v},1"
+            f"{style.outline},0,2,{style.margin_h},{style.margin_h},{style.margin_v},1"
         ),
         "",
         "[Events]",

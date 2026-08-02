@@ -163,8 +163,12 @@ def translate_cues(
     temperature: float = 0.0,
     timeout: int = 60,
     context: Optional[str] = None,
+    progress: Optional[Callable[[int, int], None]] = None,
 ) -> List[Cue]:
-    """就地填充每条 cue 的 ``translation`` 字段并返回。"""
+    """就地填充每条 cue 的 ``translation`` 字段并返回。
+
+    ``progress(done, total)`` 在每批完成后回调，用于上报翻译进度。
+    """
     if not cues:
         return cues
 
@@ -183,6 +187,8 @@ def translate_cues(
                 timeout=timeout,
             )
 
+    total = len(cues)
+    done = 0
     for group in chunk_indices(cues, max_items, max_chars):
         texts = [str(cues[i].get("text") or "") for i in group]
         translations = translate_batch(
@@ -190,5 +196,8 @@ def translate_cues(
         )
         for i, translation in zip(group, translations):
             cues[i]["translation"] = translation
+        done += len(group)
+        if progress:
+            progress(done, total)
 
     return cues

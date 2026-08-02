@@ -7,11 +7,15 @@
 - /                      前端页面
 """
 
+import dataclasses
+import json
 import os
-from typing import List, Optional
+import queue
+import threading
+from typing import Iterator, List, Optional
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -62,7 +66,7 @@ class StyleModel(BaseModel):
 
 
 class VideoRequest(BaseModel):
-    mode: str = "original"  # original 原声 / dub 配音
+    mode: str = "original"  # original 原声 / dub 配音 / both 一起导出
     sub_mode: str = MODE_TRANSLATED  # 烧录字幕：translated 中文 / bilingual 双语
     style: StyleModel = StyleModel()
 
@@ -74,6 +78,40 @@ def _job_or_404(job_id: str) -> dict:
     return job
 
 
+def _sse(q: "queue.Queue") -> Iterator[str]:
+    """从队列拉取进度事件逐条推送，遇 None 结束。"""
+    while True:
+        item = q.get()
+        if item is None:
+            break
+        yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+
+
+def _media_url(job_id: str, path: str) -> str:
+    return f"/media/{job_id}/{os.path.basename(path)}"
+
+
+def _ensure_burned(job: dict, sub_mode: str, style: SubtitleStyle, q: "queue.Queue") -> str:
+    """烧录一次得到“字幕+原声”视频，相同字幕/样式时复用，避免重复烧录。
+
+    它既是“原声版”成片，也是“配音版”换音轨的画面源。
+    """
+    sig = (sub_mode, dataclasses.astuple(style))
+    cached = job.get("burned")
+    if cached and cached["sig"] == sig and os.path.exists(cached["path"]):
+        return cached["path"]
+    q.put({"stage": "burn"})
+    out = burn_subtitles(
+        job["video"],
+        job["cues"],
+        os.path.join(job["dir"], "video_original.mp4"),
+        style=style,
+        mode=sub_mode,
+    )
+    job["burned"] = {"sig": sig, "path": out}
+    return out
+
+
 @app.post("/api/prepare")
 def prepare(req: PrepareRequest):
     import hashlib
@@ -82,46 +120,82 @@ def prepare(req: PrepareRequest):
     job_dir = os.path.join(WORKSPACE, job_id)
     os.makedirs(job_dir, exist_ok=True)
 
-    try:
-        downloaded = download_video(req.url, output=os.path.join(job_dir, "source.%(ext)s"))
-        fetched = fetch_subtitle(req.url, req.lang)
-    except SubtitleNotFoundError as err:
-        raise HTTPException(status_code=422, detail=str(err))
-    except Exception as err:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"下载失败：{err}")
+    q: "queue.Queue" = queue.Queue()
 
-    prepared = prepare_timed_text_events(fetched.events)
-    cues = format_subtitles(prepared.flat_events, fetched.lang)
-
-    warning = None
-    if req.translate:
+    def work() -> None:
         try:
-            translate_cues(cues, model=req.model or DEFAULT_MODEL)
-        except ValueError as err:
-            warning = str(err)  # 缺 API Key：保留原文，前端提示
+            def hook(d: dict) -> None:
+                status = d.get("status")
+                if status == "downloading":
+                    total = d.get("total_bytes") or d.get("total_bytes_estimate")
+                    got = d.get("downloaded_bytes") or 0
+                    pct = int(got * 100 / total) if total else None
+                    q.put({"stage": "download", "pct": pct})
+                elif status == "finished":
+                    q.put({"stage": "download", "pct": 100})
 
-    _JOBS[job_id] = {
-        "dir": job_dir,
-        "video": downloaded.path,
-        "cues": cues,
-        "meta": {
-            "title": fetched.title,
-            "lang": fetched.lang,
-            "kind": fetched.kind,
-            "duration": downloaded.duration or fetched.duration,
-        },
-    }
+            q.put({"stage": "download", "pct": 0})
+            downloaded = download_video(
+                req.url, output=os.path.join(job_dir, "source.%(ext)s"), progress_hook=hook
+            )
 
-    return {
-        "job_id": job_id,
-        "title": fetched.title,
-        "lang": fetched.lang,
-        "kind": fetched.kind,
-        "duration": downloaded.duration or fetched.duration,
-        "video_url": f"/media/{job_id}/{os.path.basename(downloaded.path)}",
-        "cues": cues,
-        "warning": warning,
-    }
+            q.put({"stage": "subtitle"})
+            fetched = fetch_subtitle(req.url, req.lang)
+
+            q.put({"stage": "segment"})
+            prepared = prepare_timed_text_events(fetched.events)
+            cues = format_subtitles(prepared.flat_events, fetched.lang)
+
+            warning = None
+            if req.translate:
+                q.put({"stage": "translate", "done": 0, "total": len(cues)})
+                try:
+                    translate_cues(
+                        cues,
+                        model=req.model or DEFAULT_MODEL,
+                        progress=lambda done, total: q.put(
+                            {"stage": "translate", "done": done, "total": total}
+                        ),
+                    )
+                except ValueError as err:
+                    warning = str(err)  # 缺 API Key：保留原文，前端提示
+
+            _JOBS[job_id] = {
+                "dir": job_dir,
+                "video": downloaded.path,
+                "cues": cues,
+                "meta": {
+                    "title": fetched.title,
+                    "lang": fetched.lang,
+                    "kind": fetched.kind,
+                    "duration": downloaded.duration or fetched.duration,
+                },
+            }
+
+            q.put(
+                {
+                    "stage": "done",
+                    "result": {
+                        "job_id": job_id,
+                        "title": fetched.title,
+                        "lang": fetched.lang,
+                        "kind": fetched.kind,
+                        "duration": downloaded.duration or fetched.duration,
+                        "video_url": _media_url(job_id, downloaded.path),
+                        "cues": cues,
+                        "warning": warning,
+                    },
+                }
+            )
+        except SubtitleNotFoundError as err:
+            q.put({"stage": "error", "detail": str(err)})
+        except Exception as err:  # noqa: BLE001
+            q.put({"stage": "error", "detail": f"下载失败：{err}"})
+        finally:
+            q.put(None)
+
+    threading.Thread(target=work, daemon=True).start()
+    return StreamingResponse(_sse(q), media_type="text/event-stream")
 
 
 @app.get("/api/srt/{job_id}")
@@ -141,38 +215,40 @@ def get_srt(job_id: str, mode: str = MODE_TRANSLATED):
 def make_video(job_id: str, req: VideoRequest):
     job = _job_or_404(job_id)
     style = req.style.to_style()
-    cues = job["cues"]
-    job_dir = job["dir"]
 
     if req.sub_mode not in (MODE_TRANSLATED, MODE_BILINGUAL, MODE_ORIGINAL):
         raise HTTPException(status_code=400, detail="非法的 sub_mode")
+    if req.mode not in ("original", "dub", "both"):
+        raise HTTPException(status_code=400, detail="非法的 mode")
 
-    try:
-        if req.mode == "dub":
-            burned = burn_subtitles(
-                job["video"],
-                cues,
-                os.path.join(job_dir, "_burned.mp4"),
-                style=style,
-                mode=req.sub_mode,
-            )
-            duration_ms = int((job["meta"].get("duration") or 0) * 1000) or None
-            dub = build_dub_track(
-                cues, os.path.join(job_dir, "dub.m4a"), total_duration_ms=duration_ms
-            )
-            out = mux_dub_video(burned, dub, os.path.join(job_dir, "video_dub.mp4"))
-        else:
-            out = burn_subtitles(
-                job["video"],
-                cues,
-                os.path.join(job_dir, "video_original.mp4"),
-                style=style,
-                mode=req.sub_mode,
-            )
-    except Exception as err:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"合成失败：{err}")
+    q: "queue.Queue" = queue.Queue()
 
-    return {"video_url": f"/media/{job_id}/{os.path.basename(out)}"}
+    def work() -> None:
+        try:
+            # 烧录一次即可：原声版直接是它，配音版只在其上换音轨。
+            burned = _ensure_burned(job, req.sub_mode, style, q)
+            videos: dict = {}
+            if req.mode in ("original", "both"):
+                videos["original"] = _media_url(job_id, burned)
+            if req.mode in ("dub", "both"):
+                q.put({"stage": "tts"})
+                duration_ms = int((job["meta"].get("duration") or 0) * 1000) or None
+                dub = build_dub_track(
+                    job["cues"],
+                    os.path.join(job["dir"], "dub.m4a"),
+                    total_duration_ms=duration_ms,
+                )
+                q.put({"stage": "mux"})
+                out = mux_dub_video(burned, dub, os.path.join(job["dir"], "video_dub.mp4"))
+                videos["dub"] = _media_url(job_id, out)
+            q.put({"stage": "done", "result": {"videos": videos}})
+        except Exception as err:  # noqa: BLE001
+            q.put({"stage": "error", "detail": f"合成失败：{err}"})
+        finally:
+            q.put(None)
+
+    threading.Thread(target=work, daemon=True).start()
+    return StreamingResponse(_sse(q), media_type="text/event-stream")
 
 
 app.mount("/media", StaticFiles(directory=WORKSPACE), name="media")

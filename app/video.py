@@ -2,7 +2,7 @@
 
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 from .ytdlp_opts import base_ydl_opts
 
@@ -21,8 +21,12 @@ def download_video(
     output_dir: str = ".",
     fmt: str = "bestvideo*+bestaudio/best",
     merge_format: str = "mp4",
+    progress_hook: Optional[Callable[[dict], None]] = None,
 ) -> DownloadedVideo:
-    """下载并合并为单个视频文件，返回最终路径与元信息。"""
+    """下载并合并为单个视频文件，返回最终路径与元信息。
+
+    ``progress_hook`` 传给 yt-dlp，可接收下载进度回调。
+    """
     import yt_dlp  # 延迟导入，便于无 yt-dlp 环境下导入本模块
 
     outtmpl = output or os.path.join(output_dir, "%(id)s.%(ext)s")
@@ -32,6 +36,8 @@ def download_video(
         "merge_output_format": merge_format,
         "outtmpl": outtmpl,
     }
+    if progress_hook is not None:
+        opts["progress_hooks"] = [progress_hook]
 
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
