@@ -1,4 +1,4 @@
-"""阶段 7：edge-TTS 中文配音 + 时间轴对齐 + 视频 B 合成。
+""":段 7：edge-TTS 中文配音 + 时间轴对齐 + 视频 B 合成。
 
 - ``plan_dub_timeline``：纯函数，根据每句音频原始时长决定放置位置与变速，
   超出可用时长时按上限加速，仍超则轻微顺延（drift）。
@@ -6,6 +6,7 @@
 """
 
 import os
+import re
 import subprocess
 import tempfile
 from typing import Any, Callable, Dict, List, Optional
@@ -14,6 +15,9 @@ Cue = Dict[str, Any]
 
 DEFAULT_VOICE = "zh-CN-YunxiNeural"
 DEFAULT_SAMPLE_RATE = 44100
+
+# 含字母/数字/CJK/假名/谙文才可发音；纯标点符号（如 ♪、…、—）会让 edge-tts 返回空音频。
+_SPEAKABLE_RE = re.compile(r"[0-9A-Za-z\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7a3]")
 
 
 class DubError(Exception):
@@ -63,7 +67,8 @@ def plan_dub_timeline(
 
 
 def _cue_dub_text(cue: Cue) -> str:
-    return str(cue.get("translation") or cue.get("text") or "").strip()
+    text = str(cue.get("translation") or cue.get("text") or "").strip()
+    return text if _SPEAKABLE_RE.search(text) else ""
 
 
 def synthesize_cue(
@@ -140,9 +145,13 @@ def build_dub_track(
         text = _cue_dub_text(cue)
         if text:
             clip = os.path.join(tmp, f"clip_{i:05d}.mp3")
-            synth(text, clip)
-            clip_paths.append(clip)
-            durations.append(probe(clip))
+            try:
+                synth(text, clip)
+                clip_paths.append(clip)
+                durations.append(probe(clip))
+            except Exception:  # noqa: BLE001 - 单句合成失败降级为静音，不中断整体
+                clip_paths.append(None)
+                durations.append(0)
         else:
             clip_paths.append(None)
             durations.append(0)

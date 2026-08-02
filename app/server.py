@@ -11,6 +11,8 @@ import dataclasses
 import json
 import os
 import queue
+import re
+import shutil
 import threading
 from typing import Iterator, List, Optional
 
@@ -44,6 +46,7 @@ class PrepareRequest(BaseModel):
     lang: Optional[str] = None
     translate: bool = True
     model: Optional[str] = None
+    force: bool = False  # 忽略缓存强制重新下载
 
 
 class StyleModel(BaseModel):
@@ -76,6 +79,36 @@ def _job_or_404(job_id: str) -> dict:
     if not job:
         raise HTTPException(status_code=404, detail="任务不存在或已过期")
     return job
+
+
+_MANIFEST = "manifest.json"
+
+
+def _manifest_path(job_dir: str) -> str:
+    return os.path.join(job_dir, _MANIFEST)
+
+
+def _load_manifest(job_dir: str) -> Optional[dict]:
+    path = _manifest_path(job_dir)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (ValueError, OSError):
+        return None
+
+
+def _save_manifest(job_dir: str, data: dict) -> None:
+    with open(_manifest_path(job_dir), "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+
+
+def _safe_job_dir(job_id: str) -> str:
+    """校验 job_id 为 hex 哈希，防止路径穿越。"""
+    if not re.fullmatch(r"[0-9a-f]{6,40}", job_id or ""):
+        raise HTTPException(status_code=400, detail="非法的 job_id")
+    return os.path.join(WORKSPACE, job_id)
 
 
 def _sse(q: "queue.Queue") -> Iterator[str]:
@@ -127,6 +160,48 @@ def prepare(req: PrepareRequest):
 
     def work() -> None:
         try:
+            # 命中缓存：同一 url 已下载/翻译过，直接复用磁盘上的视频与 cues。
+            manifest = None if req.force else _load_manifest(job_dir)
+            if manifest and os.path.exists(os.path.join(job_dir, manifest.get("video") or "")):
+                cues = manifest.get("cues") or []
+                meta = manifest.get("meta") or {}
+                warning = None
+                # 之前未翻译、本次要求翻译：只补翻译，不重新下载。
+                if req.translate and not manifest.get("translated"):
+                    q.put({"stage": "translate", "done": 0, "total": len(cues)})
+                    try:
+                        translate_cues(
+                            cues,
+                            model=req.model or DEFAULT_MODEL,
+                            progress=lambda done, total: q.put(
+                                {"stage": "translate", "done": done, "total": total}
+                            ),
+                        )
+                        manifest["translated"] = True
+                        manifest["cues"] = cues
+                        _save_manifest(job_dir, manifest)
+                    except ValueError as err:
+                        warning = str(err)
+                video_path = os.path.join(job_dir, manifest["video"])
+                _JOBS[job_id] = {"dir": job_dir, "video": video_path, "cues": cues, "meta": meta}
+                q.put(
+                    {
+                        "stage": "done",
+                        "result": {
+                            "job_id": job_id,
+                            "title": meta.get("title", ""),
+                            "lang": meta.get("lang", ""),
+                            "kind": meta.get("kind", ""),
+                            "duration": meta.get("duration", 0),
+                            "video_url": _media_url(job_id, video_path),
+                            "cues": cues,
+                            "warning": warning,
+                            "cached": True,
+                        },
+                    }
+                )
+                return
+
             def hook(d: dict) -> None:
                 if d.get("status") != "downloading":
                     return
@@ -174,17 +249,28 @@ def prepare(req: PrepareRequest):
                 except ValueError as err:
                     warning = str(err)  # 缺 API Key：保留原文，前端提示
 
+            meta = {
+                "title": fetched.title,
+                "lang": fetched.lang,
+                "kind": fetched.kind,
+                "duration": downloaded.duration or fetched.duration,
+            }
             _JOBS[job_id] = {
                 "dir": job_dir,
                 "video": downloaded.path,
                 "cues": cues,
-                "meta": {
-                    "title": fetched.title,
-                    "lang": fetched.lang,
-                    "kind": fetched.kind,
-                    "duration": downloaded.duration or fetched.duration,
-                },
+                "meta": meta,
             }
+            _save_manifest(
+                job_dir,
+                {
+                    "url": req.url,
+                    "video": os.path.basename(downloaded.path),
+                    "cues": cues,
+                    "translated": bool(req.translate and warning is None),
+                    "meta": meta,
+                },
+            )
 
             q.put(
                 {
@@ -198,6 +284,7 @@ def prepare(req: PrepareRequest):
                         "video_url": _media_url(job_id, downloaded.path),
                         "cues": cues,
                         "warning": warning,
+                        "cached": False,
                     },
                 }
             )
@@ -266,6 +353,52 @@ def make_video(job_id: str, req: VideoRequest):
 
     threading.Thread(target=work, daemon=True).start()
     return StreamingResponse(_sse(q), media_type="text/event-stream")
+
+
+@app.get("/api/cache")
+def list_cache():
+    """列出已缓存的任务（供 UI 展示与清理）。"""
+    items = []
+    for name in sorted(os.listdir(WORKSPACE)):
+        job_dir = os.path.join(WORKSPACE, name)
+        if not os.path.isdir(job_dir):
+            continue
+        manifest = _load_manifest(job_dir)
+        if not manifest:
+            continue
+        meta = manifest.get("meta") or {}
+        items.append(
+            {
+                "job_id": name,
+                "url": manifest.get("url", ""),
+                "title": meta.get("title", ""),
+                "translated": bool(manifest.get("translated")),
+            }
+        )
+    return {"items": items}
+
+
+@app.delete("/api/cache")
+def clear_cache():
+    """清空所有缓存任务。"""
+    cleared = 0
+    for name in list(os.listdir(WORKSPACE)):
+        job_dir = os.path.join(WORKSPACE, name)
+        if os.path.isdir(job_dir):
+            shutil.rmtree(job_dir, ignore_errors=True)
+            cleared += 1
+    _JOBS.clear()
+    return {"cleared": cleared}
+
+
+@app.delete("/api/cache/{job_id}")
+def delete_cache(job_id: str):
+    """删除单个 url 对应的缓存。"""
+    job_dir = _safe_job_dir(job_id)
+    if os.path.isdir(job_dir):
+        shutil.rmtree(job_dir, ignore_errors=True)
+    _JOBS.pop(job_id, None)
+    return {"ok": True}
 
 
 app.mount("/media", StaticFiles(directory=WORKSPACE), name="media")

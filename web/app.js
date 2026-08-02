@@ -212,8 +212,11 @@ async function prepare() {
     $("workspace").classList.remove("hidden");
 
     applyOverlayStyle();
+    const cachedTip = result.cached ? "（已使用缓存）" : "";
     setStatus(
-      result.warning ? `已准备（注意：${result.warning}）` : "已准备完成，可预览与下载。",
+      result.warning
+        ? `已准备${cachedTip}（注意：${result.warning}）`
+        : `已准备完成${cachedTip}，可预览与下载。`,
     );
   } catch (err) {
     setStatus(err.message, true);
@@ -261,8 +264,29 @@ async function exportVideo(mode) {
   }
 }
 
+async function clearCache() {
+  if (!confirm("确定清空所有已下载/翻译的缓存？")) return;
+  const btn = $("clear-cache-btn");
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/cache", { method: "DELETE" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "清理失败");
+    state.jobId = null;
+    state.cues = [];
+    state.currentIndex = -1;
+    $("workspace").classList.add("hidden");
+    setStatus(`已清理 ${data.cleared} 项缓存。`);
+  } catch (err) {
+    setStatus(err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function bindEvents() {
   $("prepare-btn").addEventListener("click", prepare);
+  $("clear-cache-btn").addEventListener("click", clearCache);
   $("player").addEventListener("timeupdate", renderSubtitle);
   $("preview-mode").addEventListener("change", () => {
     state.currentIndex = -1;
