@@ -76,6 +76,9 @@ function renderStage(scope, msg) {
   } else if (msg.stage === "translate" && msg.total) {
     text = `翻译 ${msg.done}/${msg.total}`;
     pct = Math.round((msg.done * 100) / msg.total);
+  } else if (msg.stage === "burn" && msg.pct != null) {
+    text = `烧录字幕 ${msg.pct}%`;
+    pct = msg.pct;
   }
   setBar(scope, text, pct);
 }

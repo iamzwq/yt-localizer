@@ -100,13 +100,16 @@ def _ensure_burned(job: dict, sub_mode: str, style: SubtitleStyle, q: "queue.Que
     cached = job.get("burned")
     if cached and cached["sig"] == sig and os.path.exists(cached["path"]):
         return cached["path"]
-    q.put({"stage": "burn"})
+    q.put({"stage": "burn", "pct": 0})
+    total_ms = int((job["meta"].get("duration") or 0) * 1000) or None
     out = burn_subtitles(
         job["video"],
         job["cues"],
         os.path.join(job["dir"], "video_original.mp4"),
         style=style,
         mode=sub_mode,
+        total_duration_ms=total_ms,
+        progress=lambda pct: q.put({"stage": "burn", "pct": pct}),
     )
     job["burned"] = {"sig": sig, "path": out}
     return out
@@ -125,19 +128,30 @@ def prepare(req: PrepareRequest):
     def work() -> None:
         try:
             def hook(d: dict) -> None:
-                status = d.get("status")
-                if status == "downloading":
-                    total = d.get("total_bytes") or d.get("total_bytes_estimate")
-                    got = d.get("downloaded_bytes") or 0
-                    pct = int(got * 100 / total) if total else None
-                    q.put({"stage": "download", "pct": pct})
-                elif status == "finished":
-                    q.put({"stage": "download", "pct": 100})
+                if d.get("status") != "downloading":
+                    return
+                total = d.get("total_bytes") or d.get("total_bytes_estimate")
+                got = d.get("downloaded_bytes") or 0
+                frac = got / total if total else 0
+                # bestvideo+bestaudio 会分别下载两条流、各自 0→100；
+                # 按编解码信息把视频流映射到 0-90%、音频流映射到 90-100%，合成单条进度。
+                info = d.get("info_dict") or {}
+                v, a = info.get("vcodec"), info.get("acodec")
+                has_v = bool(v) and v != "none"
+                has_a = bool(a) and a != "none"
+                if has_v and not has_a:
+                    overall = frac * 0.9
+                elif has_a and not has_v:
+                    overall = 0.9 + frac * 0.1
+                else:
+                    overall = frac
+                q.put({"stage": "download", "pct": int(overall * 100)})
 
             q.put({"stage": "download", "pct": 0})
             downloaded = download_video(
                 req.url, output=os.path.join(job_dir, "source.%(ext)s"), progress_hook=hook
             )
+            q.put({"stage": "download", "pct": 100})
 
             q.put({"stage": "subtitle"})
             fetched = fetch_subtitle(req.url, req.lang)

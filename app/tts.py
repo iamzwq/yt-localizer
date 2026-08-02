@@ -12,7 +12,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 Cue = Dict[str, Any]
 
-DEFAULT_VOICE = "zh-CN-XiaoxiaoNeural"
+DEFAULT_VOICE = "zh-CN-YunxiNeural"
 DEFAULT_SAMPLE_RATE = 44100
 
 
@@ -163,10 +163,9 @@ def build_dub_track(
         filter_parts.append(f"[{idx}:a]{','.join(chain)}[{label}]")
         mix_labels.append(f"[{label}]")
 
-    if total_duration_ms is None:
-        total_duration_ms = max(
-            (seg["at"] + seg["play_duration"] for seg in segments), default=0
-        )
+    # 音轨长度取“视频时长”与“配音实际结束”的较大值，避免末段配音被截断。
+    dub_end = max((seg["at"] + seg["play_duration"] for seg in segments), default=0)
+    total_duration_ms = max(total_duration_ms or 0, dub_end)
     total_sec = max(0.001, total_duration_ms / 1000)
 
     cmd = [ffmpeg, "-y"]
@@ -202,28 +201,28 @@ def mux_dub_video(
     output_path: str,
     *,
     ffmpeg: str = "ffmpeg",
+    ffprobe: str = "ffprobe",
 ) -> str:
-    """用配音音轨替换视频音轨（视频流直接复制，不重新编码）。"""
-    cmd = [
-        ffmpeg,
-        "-y",
-        "-i",
-        os.path.abspath(video_path),
-        "-i",
-        os.path.abspath(audio_path),
-        "-map",
-        "0:v:0",
-        "-map",
-        "1:a:0",
-        "-c:v",
-        "copy",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "192k",
-        "-shortest",
-        os.path.abspath(output_path),
-    ]
+    """用配音音轨替换视频音轨；若配音比视频长，克隆最后一帧补足画面。"""
+    abs_video = os.path.abspath(video_path)
+    abs_audio = os.path.abspath(audio_path)
+    pad_ms = max(0, probe_duration_ms(abs_audio, ffprobe) - probe_duration_ms(abs_video, ffprobe))
+
+    cmd = [ffmpeg, "-y", "-i", abs_video, "-i", abs_audio, "-map", "0:v:0", "-map", "1:a:0"]
+    if pad_ms > 40:
+        # 配音更长：冻结末帧延长视频（需重编码），保证末段配音读完。
+        cmd += [
+            "-vf",
+            f"tpad=stop_mode=clone:stop_duration={pad_ms / 1000:.3f}",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+        ]
+    else:
+        cmd += ["-c:v", "copy"]
+    cmd += ["-c:a", "aac", "-b:a", "192k", os.path.abspath(output_path)]
+
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
         raise DubError(proc.stderr[-2000:])

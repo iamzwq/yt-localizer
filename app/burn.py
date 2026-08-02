@@ -6,7 +6,7 @@
 import os
 import subprocess
 import tempfile
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from .ass import SubtitleStyle, build_ass
 from .srt import MODE_BILINGUAL
@@ -32,8 +32,13 @@ def burn_subtitles(
     mode: str = MODE_BILINGUAL,
     fonts_dir: Optional[str] = None,
     ffmpeg: str = "ffmpeg",
+    total_duration_ms: Optional[int] = None,
+    progress: Optional[Callable[[int], None]] = None,
 ) -> str:
-    """把 cues 烧录进 video_path，保留原音轨，输出到 output_path。"""
+    """把 cues 烧录进 video_path，保留原音轨，输出到 output_path。
+
+    ``progress(pct)`` 非空时用 ffmpeg ``-progress`` 流式上报 0~100 百分比。
+    """
     style = style or SubtitleStyle()
     ass_text = build_ass(cues, style, mode)
 
@@ -52,20 +57,17 @@ def burn_subtitles(
         if fonts_dir:
             vf += f":fontsdir={escape_ass_path_for_filter(os.path.abspath(fonts_dir))}"
 
-        cmd = [
-            ffmpeg,
-            "-y",
-            "-i",
-            abs_video,
-            "-vf",
-            vf,
-            "-c:a",
-            "copy",
-            abs_output,
-        ]
-        proc = subprocess.run(cmd, cwd=work_dir, capture_output=True, text=True)
-        if proc.returncode != 0:
-            raise FfmpegError(proc.stderr[-2000:])
+        cmd = [ffmpeg, "-y", "-i", abs_video, "-vf", vf, "-c:a", "copy"]
+        if progress is not None:
+            cmd += ["-progress", "pipe:1", "-nostats"]
+        cmd += [abs_output]
+
+        if progress is None:
+            proc = subprocess.run(cmd, cwd=work_dir, capture_output=True, text=True)
+            if proc.returncode != 0:
+                raise FfmpegError(proc.stderr[-2000:])
+        else:
+            _run_with_progress(cmd, work_dir, total_duration_ms, progress)
     finally:
         try:
             os.remove(ass_path)
@@ -73,3 +75,33 @@ def burn_subtitles(
             pass
 
     return output_path
+
+
+def _run_with_progress(
+    cmd: List[str],
+    work_dir: str,
+    total_duration_ms: Optional[int],
+    progress: Callable[[int], None],
+) -> None:
+    """运行 ffmpeg 并解析 ``-progress`` 输出的 ``out_time_us`` 推算百分比。"""
+    proc = subprocess.Popen(
+        cmd, cwd=work_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    last = 0
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        line = line.strip()
+        if line.startswith("out_time_us=") and total_duration_ms:
+            try:
+                done_ms = int(line.split("=", 1)[1]) / 1000
+            except ValueError:
+                continue
+            pct = min(99, int(done_ms * 100 / total_duration_ms))
+            if pct > last:
+                last = pct
+                progress(pct)
+    proc.wait()
+    stderr = proc.stderr.read() if proc.stderr else ""
+    if proc.returncode != 0:
+        raise FfmpegError(stderr[-2000:])
+    progress(100)
