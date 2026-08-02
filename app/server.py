@@ -245,12 +245,15 @@ def make_video(job_id: str, req: VideoRequest):
             if req.mode in ("original", "both"):
                 videos["original"] = _media_url(job_id, burned)
             if req.mode in ("dub", "both"):
-                q.put({"stage": "tts"})
+                q.put({"stage": "tts", "done": 0, "total": len(job["cues"])})
                 duration_ms = int((job["meta"].get("duration") or 0) * 1000) or None
                 dub = build_dub_track(
                     job["cues"],
                     os.path.join(job["dir"], "dub.m4a"),
                     total_duration_ms=duration_ms,
+                    progress=lambda done, total: q.put(
+                        {"stage": "tts", "done": done, "total": total}
+                    ),
                 )
                 q.put({"stage": "mux"})
                 out = mux_dub_video(burned, dub, os.path.join(job["dir"], "video_dub.mp4"))

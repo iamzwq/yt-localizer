@@ -119,10 +119,12 @@ def build_dub_track(
     workdir: Optional[str] = None,
     synth: Optional[Callable[[str, str], None]] = None,
     probe: Optional[Callable[[str], int]] = None,
+    progress: Optional[Callable[[int, int], None]] = None,
 ) -> str:
     """合成整条配音音轨并对齐到视频时间轴。
 
     ``synth(text, out)`` 与 ``probe(path)`` 可注入，便于测试或替换后端。
+    ``progress(done, total)`` 每合成一句后回调，用于上报配音进度。
     """
     if not cues:
         raise DubError("没有可配音的字幕")
@@ -133,16 +135,19 @@ def build_dub_track(
     tmp = workdir or tempfile.mkdtemp(prefix="dub_")
     clip_paths: List[Optional[str]] = []
     durations: List[float] = []
+    total = len(cues)
     for i, cue in enumerate(cues):
         text = _cue_dub_text(cue)
-        if not text:
+        if text:
+            clip = os.path.join(tmp, f"clip_{i:05d}.mp3")
+            synth(text, clip)
+            clip_paths.append(clip)
+            durations.append(probe(clip))
+        else:
             clip_paths.append(None)
             durations.append(0)
-            continue
-        clip = os.path.join(tmp, f"clip_{i:05d}.mp3")
-        synth(text, clip)
-        clip_paths.append(clip)
-        durations.append(probe(clip))
+        if progress:
+            progress(i + 1, total)
 
     segments = plan_dub_timeline(cues, durations, max_speedup=max_speedup)
 

@@ -1,4 +1,4 @@
-// 前端逻辑：准备任务、字幕预览（所见即所得）、下载 SRT 与导出视频。
+// 前端逻辑：准备任务、字幕预览（所见即所得）、导出视频。
 
 const PLAY_RES_Y = 720; // 与后端 ASS PlayResY 对齐，保证预览与烧录一致
 
@@ -79,6 +79,9 @@ function renderStage(scope, msg) {
   } else if (msg.stage === "burn" && msg.pct != null) {
     text = `烧录字幕 ${msg.pct}%`;
     pct = msg.pct;
+  } else if (msg.stage === "tts" && msg.total) {
+    text = `合成配音 ${msg.done}/${msg.total}`;
+    pct = Math.round((msg.done * 100) / msg.total);
   }
   setBar(scope, text, pct);
 }
@@ -207,11 +210,6 @@ async function prepare() {
     $("meta").textContent =
       `标题：${result.title}　语言：${result.lang}　来源：${result.kind}　字幕：${state.cues.length} 条`;
     $("workspace").classList.remove("hidden");
-
-    const base = `/api/srt/${result.job_id}`;
-    $("srt-original").href = `${base}?mode=original`;
-    $("srt-translated").href = `${base}?mode=translated`;
-    $("srt-bilingual").href = `${base}?mode=bilingual`;
 
     applyOverlayStyle();
     setStatus(
