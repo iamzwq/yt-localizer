@@ -1,4 +1,4 @@
-// 前端逻辑：准备任务、字幕预览（所见即所得）、导出视频。
+// ,端逻辑：准备,务、字幕预览（所,,所得）、导出视频。,
 
 const PLAY_RES_Y = 720; // 与后端 ASS PlayResY 对齐，保证预览与烧录一致
 
@@ -254,7 +254,8 @@ async function exportVideo(mode) {
     });
     const urls = Object.values((result && result.videos) || {});
     if (!urls.length) throw new Error("未生成视频");
-    urls.forEach(downloadFile);
+    // 连续多个程序化下载会被浏览器拦截，逐个间隔触发。
+    urls.forEach((url, i) => setTimeout(() => downloadFile(url), i * 800));
     $("export-status").textContent = `完成，已开始下载 ${urls.length} 个视频。`;
   } catch (err) {
     $("export-status").textContent = err.message;
