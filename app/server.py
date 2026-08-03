@@ -170,8 +170,8 @@ def _ensure_dub(job: dict, burned: str, sub_mode: str, style: SubtitleStyle, q: 
     cached = job.get("dub_video")
     if cached and cached["sig"] == sig and os.path.exists(out):
         return out
-    q.put({"stage": "mux"})
-    mux_dub_video(burned, dub_audio, out)
+    q.put({"stage": "mux", "pct": 0})
+    mux_dub_video(burned, dub_audio, out, progress=lambda pct: q.put({"stage": "mux", "pct": pct}))
     job["dub_video"] = {"sig": sig, "path": out}
     return out
 

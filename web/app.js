@@ -82,6 +82,9 @@ function renderStage(scope, msg) {
   } else if (msg.stage === "tts" && msg.total) {
     text = `合成配音 ${msg.done}/${msg.total}`;
     pct = Math.round((msg.done * 100) / msg.total);
+  } else if (msg.stage === "mux" && msg.pct != null) {
+    text = `合成视频 ${msg.pct}%`;
+    pct = msg.pct;
   }
   setBar(scope, text, pct);
 }
