@@ -1,4 +1,4 @@
-""":段 7：edge-TTS 中文配音 + 时间轴对齐 + 视频 B 合成。
+"""edge-TTS 中文配音 + 时间轴对齐 + 视频 B 合成。
 
 - ``plan_dub_timeline``：纯函数，根据每句音频原始时长决定放置位置与变速，
   超出可用时长时按上限加速，仍超则轻微顺延（drift）。
@@ -29,6 +29,7 @@ def plan_dub_timeline(
     cues: List[Cue],
     durations_ms: List[float],
     max_speedup: float = 1.5,
+    max_drift_ms: int = 1500,
 ) -> List[Dict[str, Any]]:
     """规划每句配音的放置时间与变速倍率。
 
@@ -36,7 +37,12 @@ def plan_dub_timeline(
     - ``at``：在最终音轨上的起始毫秒（含顺延后的实际位置）。
     - ``speed``：atempo 倍率（1.0 表示不变速）。
     - ``play_duration``：变速后时长（毫秒）。
+
+    超出槽位优先用 ``max_speedup`` 内的语速塞入；仍塞不下时在 ``max_drift_ms``
+    内追加加速（而非无界顺延），避免漂移跨多句累积导致配音与字幕持续错位。
     """
+    _HARD_SPEEDUP_CAP = 3.0  # 单个 atempo 滤镜的安全上限，避免加速过度失真
+
     segments: List[Dict[str, Any]] = []
     cursor = 0.0
     count = len(cues)
@@ -51,8 +57,14 @@ def plan_dub_timeline(
         if slot > 0 and source > slot:
             speed = min(max_speedup, source / slot)
             play_duration = source / speed
+            overflow = play_duration - slot
+            if overflow > max_drift_ms:
+                target = slot + max_drift_ms
+                if target > 0:
+                    speed = min(_HARD_SPEEDUP_CAP, source / target)
+                    play_duration = source / speed
 
-        at = max(cursor, float(start))  # 上一句超时则顺延
+        at = max(cursor, float(start))  # 上一句超时则顺延（幅度已被上面限制）
         segments.append(
             {
                 "index": i,

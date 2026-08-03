@@ -47,6 +47,15 @@ def test_plan_last_cue_uses_source_duration_as_slot():
     assert segments[0]["play_duration"] == 1200
 
 
+def test_plan_bounds_drift_with_extra_speedup():
+    # 槽位1000、时长20000，1.5倍仍严重超时；在 max_drift_ms 内追加加速到硬上限 3.0，
+    # 避免无界顺延导致后续字幕与配音持续错位。
+    cues = _cues([0, 1000])
+    segments = plan_dub_timeline(cues, [20000, 500], max_speedup=1.5, max_drift_ms=1500)
+    assert segments[0]["speed"] == 3.0
+    assert segments[0]["play_duration"] == 6667
+
+
 def test_build_dub_track_empty_raises():
     import pytest
 

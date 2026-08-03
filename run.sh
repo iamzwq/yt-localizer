@@ -11,9 +11,19 @@ echo "============================================"
 command -v ffmpeg >/dev/null 2>&1 \
   || echo "[警告] 未找到 ffmpeg，烧录/配音功能将不可用（字幕下载仍可用）。"
 
+# macOS 通常只有 python3，无 python 命令；优先用 python3。
+if command -v python3 >/dev/null 2>&1; then
+  PY=python3
+elif command -v python >/dev/null 2>&1; then
+  PY=python
+else
+  echo "[错误] 未找到 python3/python，请先安装 Python 3。"
+  exit 1
+fi
+
 if [ ! -d ".venv" ]; then
   echo "首次运行：创建虚拟环境 .venv ..."
-  python -m venv .venv
+  "$PY" -m venv .venv
 fi
 
 # Windows 的 venv 在 Scripts/，类 Unix 在 bin/
