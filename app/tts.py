@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional
 
@@ -139,11 +140,13 @@ def build_dub_track(
     probe: Optional[Callable[[str], int]] = None,
     progress: Optional[Callable[[int, int], None]] = None,
     concurrency: int = 4,
+    retries: int = 2,
 ) -> str:
     """合成整条配音音轨并对齐到视频时间轴。
 
     ``synth(text, out)`` 与 ``probe(path)`` 可注入，便于测试或替换后端。
     ``progress(done, total)`` 每合成一句后回调，用于上报配音进度。
+    ``retries``：单句合成异常或返回空音频时的重试次数（指数退避），耗尽后降级为静音。
     """
     if not cues:
         raise DubError("没有可配音的字幕")
@@ -159,11 +162,17 @@ def build_dub_track(
         if not text:
             return i, None, 0
         clip = os.path.join(tmp, f"clip_{i:05d}.mp3")
-        try:
-            synth(text, clip)
-            return i, clip, probe(clip)
-        except Exception:  # noqa: BLE001 - 单句合成失败降级为静音，不中断整体
-            return i, None, 0
+        for attempt in range(retries + 1):
+            try:
+                synth(text, clip)
+                dur = probe(clip)
+                if dur > 0:
+                    return i, clip, dur
+            except Exception:  # noqa: BLE001 - 重试耗尽后降级为静音，不中断整体
+                pass
+            if attempt < retries:
+                time.sleep(0.5 * (attempt + 1))
+        return i, None, 0
 
     clip_paths: List[Optional[str]] = [None] * total
     durations: List[float] = [0] * total
