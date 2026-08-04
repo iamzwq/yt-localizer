@@ -67,7 +67,22 @@
                 class="pointer-events-none absolute bottom-6 left-1/2 hidden max-w-[96%] -translate-x-1/2 whitespace-pre-wrap text-center leading-snug"
               ></div>
             </div>
-            <p id="meta" class="mt-2 text-sm text-slate-400"></p>
+            <div class="mt-2 flex items-start gap-3">
+              <img
+                id="meta-thumbnail"
+                class="hidden h-16 w-28 shrink-0 rounded object-cover"
+                alt="视频缩略图"
+              />
+              <div>
+                <p id="meta" class="text-sm text-slate-400"></p>
+                <a
+                  id="meta-source"
+                  class="hidden text-sm text-sky-400 hover:underline"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                ></a>
+              </div>
+            </div>
           </div>
 
           <!-- 样式与下载 -->

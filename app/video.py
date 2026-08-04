@@ -13,6 +13,7 @@ class DownloadedVideo:
     video_id: str
     title: str
     duration: float
+    thumbnail: str = ""
 
 
 def download_video(
@@ -53,4 +54,5 @@ def download_video(
         video_id=info.get("id") or "",
         title=info.get("title") or "",
         duration=info.get("duration") or 0,
+        thumbnail=info.get("thumbnail") or "",
     )

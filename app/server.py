@@ -225,6 +225,8 @@ def prepare(req: PrepareRequest):
                             "kind": meta.get("kind", ""),
                             "duration": meta.get("duration", 0),
                             "video_url": _media_url(job_id, video_path),
+                            "source_url": meta.get("source_url") or manifest.get("url", ""),
+                            "thumbnail": meta.get("thumbnail", ""),
                             "cues": cues,
                             "warning": warning,
                             "cached": True,
@@ -287,6 +289,8 @@ def prepare(req: PrepareRequest):
                 "kind": fetched.kind,
                 "duration": downloaded.duration or fetched.duration,
                 "description": (fetched.description or "")[:1000],
+                "source_url": req.url,
+                "thumbnail": downloaded.thumbnail,
             }
             _JOBS[job_id] = {
                 "dir": job_dir,
@@ -315,6 +319,8 @@ def prepare(req: PrepareRequest):
                         "kind": fetched.kind,
                         "duration": downloaded.duration or fetched.duration,
                         "video_url": _media_url(job_id, downloaded.path),
+                        "source_url": req.url,
+                        "thumbnail": downloaded.thumbnail,
                         "cues": cues,
                         "warning": warning,
                         "cached": False,

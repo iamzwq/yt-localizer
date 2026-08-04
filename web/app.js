@@ -203,6 +203,24 @@ async function prepare() {
     $("player").src = result.video_url;
     $("meta").textContent =
       `标题：${result.title}　语言：${result.lang}　来源：${result.kind}　字幕：${state.cues.length} 条`;
+
+    const thumb = $("meta-thumbnail");
+    if (result.thumbnail) {
+      thumb.src = result.thumbnail;
+      thumb.classList.remove("hidden");
+    } else {
+      thumb.classList.add("hidden");
+    }
+
+    const sourceLink = $("meta-source");
+    if (result.source_url) {
+      sourceLink.href = result.source_url;
+      sourceLink.textContent = `视频原地址：${result.source_url}`;
+      sourceLink.classList.remove("hidden");
+    } else {
+      sourceLink.classList.add("hidden");
+    }
+
     $("workspace").classList.remove("hidden");
 
     applyOverlayStyle();
