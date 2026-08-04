@@ -1,7 +1,7 @@
 """edge-TTS 中文配音 + 时间轴对齐 + 视频 B 合成。
 
-- ``plan_dub_timeline``：纯函数，根据每句音频原始时长决定放置位置与变速，
-  超出可用时长时按上限加速，仍超则轻微顺延（drift）。
+- ``plan_dub_timeline``：纯函数，每句音频独立锚定在自身字幕时间窗（start~end）内，
+  原声时长超出窗口时按 ``atempo`` 倍率加速塞入，不做跨句顺延，避免误差累积。
 - 合成/组轨/换音轨为 ffmpeg + edge-tts 的 IO 封装。
 """
 
@@ -60,53 +60,39 @@ def _run_ffmpeg_with_progress(
 def plan_dub_timeline(
     cues: List[Cue],
     durations_ms: List[float],
-    max_speedup: float = 1.5,
-    max_drift_ms: int = 1500,
+    max_speedup: float = 1.6,
 ) -> List[Dict[str, Any]]:
-    """规划每句配音的放置时间与变速倍率。
+    """规划每句配音的放置时间与变速倍率（不做顺延，每句独立锚定自身时间窗）。
 
     返回每句 ``{index, at, speed, play_duration, source_duration}``：
-    - ``at``：在最终音轨上的起始毫秒（含顺延后的实际位置）。
-    - ``speed``：atempo 倍率（1.0 表示不变速）。
-    - ``play_duration``：变速后时长（毫秒）。
-
-    超出槽位优先用 ``max_speedup`` 内的语速塞入；仍塞不下时在 ``max_drift_ms``
-    内追加加速（而非无界顺延），避免漂移跨多句累积导致配音与字幕持续错位。
+    - ``at``：恒等于该句字幕自身的 ``start``，不依赖其他句是否超时——
+      因此不存在“一句超时、后面全部跟着晚”的顺延累积问题。
+    - ``speed``：atempo 倍率（1.0 表示不变速），按“该句原声时长 / 该句字幕自身
+      显示时长(end-start)”计算，超过 ``max_speedup`` 时按上限截断。
+    - ``play_duration``：变速后时长（毫秒）；若语速已到上限仍装不下，允许这一句
+      音频尾部超出自己的字幕窗口，但绝不影响下一句的起播时间。
     """
-    _HARD_SPEEDUP_CAP = 3.0  # 单个 atempo 滤镜的安全上限，避免加速过度失真
-
     segments: List[Dict[str, Any]] = []
-    cursor = 0.0
-    count = len(cues)
     for i, cue in enumerate(cues):
-        start = cue["start"]
+        start = float(cue["start"])
+        window = max(0.0, float(cue.get("end", start)) - start)
         source = max(0.0, float(durations_ms[i]))
-        next_start = cues[i + 1]["start"] if i + 1 < count else start + source
-        slot = max(0.0, next_start - start)
 
         speed = 1.0
         play_duration = source
-        if slot > 0 and source > slot:
-            speed = min(max_speedup, source / slot)
+        if window > 0 and source > window:
+            speed = min(max_speedup, source / window)
             play_duration = source / speed
-            overflow = play_duration - slot
-            if overflow > max_drift_ms:
-                target = slot + max_drift_ms
-                if target > 0:
-                    speed = min(_HARD_SPEEDUP_CAP, source / target)
-                    play_duration = source / speed
 
-        at = max(cursor, float(start))  # 上一句超时则顺延（幅度已被上面限制）
         segments.append(
             {
                 "index": i,
-                "at": int(round(at)),
+                "at": int(round(start)),
                 "speed": round(speed, 4),
                 "play_duration": int(round(play_duration)),
                 "source_duration": int(round(source)),
             }
         )
-        cursor = at + play_duration
 
     return segments
 
@@ -161,8 +147,7 @@ def build_dub_track(
     *,
     voice: str = DEFAULT_VOICE,
     rate: str = "+0%",
-    max_speedup: float = 1.5,
-    max_drift_ms: int = 1500,
+    max_speedup: float = 1.6,
     sample_rate: int = DEFAULT_SAMPLE_RATE,
     total_duration_ms: Optional[int] = None,
     ffmpeg: str = "ffmpeg",
@@ -227,7 +212,7 @@ def build_dub_track(
                 if progress:
                     progress(done, total)
 
-        segments = plan_dub_timeline(cues, durations, max_speedup=max_speedup, max_drift_ms=max_drift_ms)
+        segments = plan_dub_timeline(cues, durations, max_speedup=max_speedup)
 
         inputs: List[str] = []
         filter_parts: List[str] = []

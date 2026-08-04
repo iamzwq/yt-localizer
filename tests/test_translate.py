@@ -1,5 +1,6 @@
 from app.translate import (
     build_messages,
+    build_video_context,
     chunk_indices,
     parse_translation_response,
     translate_batch,
@@ -9,6 +10,31 @@ from app.translate import (
 
 def _cues(texts):
     return [{"start": i * 1000, "end": i * 1000 + 900, "text": t} for i, t in enumerate(texts)]
+
+
+def test_build_video_context_combines_title_and_description():
+    ctx = build_video_context("标题A", "这是简介")
+    assert "标题A" in ctx and "这是简介" in ctx
+
+
+def test_build_video_context_truncates_long_description():
+    ctx = build_video_context("T", "x" * 1000, max_chars=100)
+    assert ctx.endswith("…")
+    assert len(ctx) < 200
+
+
+def test_build_video_context_empty_returns_blank():
+    assert build_video_context("", "") == ""
+
+
+def test_build_video_context_title_only():
+    assert build_video_context("仅标题", "") == "视频标题：仅标题"
+
+
+def test_context_injected_into_system_prompt():
+    messages = build_messages(["hi"], context=build_video_context("标题X", "简介Y"))
+    assert "标题X" in messages[0]["content"]
+    assert "简介Y" in messages[0]["content"]
 
 
 def test_chunk_indices_by_count():

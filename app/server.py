@@ -26,7 +26,7 @@ from .burn import burn_subtitles
 from .fetch import SubtitleNotFoundError, fetch_subtitle
 from .srt import MODE_BILINGUAL, MODE_ORIGINAL, MODE_TRANSLATED, build_srt
 from .subtitle import format_subtitles, prepare_timed_text_events
-from .translate import DEFAULT_MODEL, translate_cues
+from .translate import DEFAULT_MODEL, build_video_context, translate_cues
 from .tts import build_dub_track, mux_dub_video
 from .video import download_video
 
@@ -201,6 +201,9 @@ def prepare(req: PrepareRequest):
                         translate_cues(
                             cues,
                             model=req.model or DEFAULT_MODEL,
+                            context=build_video_context(
+                                meta.get("title"), meta.get("description")
+                            ),
                             progress=lambda done, total: q.put(
                                 {"stage": "translate", "done": done, "total": total}
                             ),
@@ -270,6 +273,7 @@ def prepare(req: PrepareRequest):
                     translate_cues(
                         cues,
                         model=req.model or DEFAULT_MODEL,
+                        context=build_video_context(fetched.title, fetched.description),
                         progress=lambda done, total: q.put(
                             {"stage": "translate", "done": done, "total": total}
                         ),
@@ -282,6 +286,7 @@ def prepare(req: PrepareRequest):
                 "lang": fetched.lang,
                 "kind": fetched.kind,
                 "duration": downloaded.duration or fetched.duration,
+                "description": (fetched.description or "")[:1000],
             }
             _JOBS[job_id] = {
                 "dir": job_dir,

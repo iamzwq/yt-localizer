@@ -68,6 +68,23 @@ def build_messages(
     ]
 
 
+def build_video_context(
+    title: str = "", description: str = "", max_chars: int = 600
+) -> str:
+    """用视频标题与简介拼出翻译参考上下文；两者皆空时返回空串。"""
+    parts = []
+    title = str(title or "").strip()
+    description = str(description or "").strip()
+    if title:
+        parts.append(f"视频标题：{title}")
+    if description:
+        desc = description[:max_chars].strip()
+        if len(description) > max_chars:
+            desc += "…"
+        parts.append(f"视频简介：{desc}")
+    return "\n".join(parts)
+
+
 def _strip_code_fence(text: str) -> str:
     text = text.strip()
     if text.startswith("```"):
