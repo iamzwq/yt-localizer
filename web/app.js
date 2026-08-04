@@ -1,4 +1,4 @@
-// ,端逻辑：准备,务、字幕预览（所,,所得）、导出视频。,
+// 前端逻辑：准备任务、字幕预览（所见即所得）、导出视频。
 
 const PLAY_RES_Y = 720; // 与后端 ASS PlayResY 对齐，保证预览与烧录一致
 
@@ -222,7 +222,7 @@ async function prepare() {
 
 async function exportVideo(mode) {
   if (!state.jobId) return;
-  const btnIds = ["export-original", "export-dub", "export-both"];
+  const btnIds = ["export-original", "export-both"];
   btnIds.forEach((id) => ($(id).disabled = true));
   $("export-links").classList.add("hidden");
   $("export-links").innerHTML = "";
@@ -324,7 +324,6 @@ function bindEvents() {
   window.addEventListener("resize", applyOverlayStyle);
 
   $("export-original").addEventListener("click", () => exportVideo("original"));
-  $("export-dub").addEventListener("click", () => exportVideo("dub"));
   $("export-both").addEventListener("click", () => exportVideo("both"));
 }
 

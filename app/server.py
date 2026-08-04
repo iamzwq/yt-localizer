@@ -69,7 +69,7 @@ class StyleModel(BaseModel):
 
 
 class VideoRequest(BaseModel):
-    mode: str = "original"  # original 原声 / dub 配音 / both 一起导出
+    mode: str = "original"  # original 原声 / both 一起导出（原声 + 配音）
     sub_mode: str = MODE_TRANSLATED  # 烧录字幕：translated 中文 / bilingual 双语
     style: StyleModel = StyleModel()
 
@@ -352,7 +352,7 @@ def make_video(job_id: str, req: VideoRequest):
 
     if req.sub_mode not in (MODE_TRANSLATED, MODE_BILINGUAL, MODE_ORIGINAL):
         raise HTTPException(status_code=400, detail="非法的 sub_mode")
-    if req.mode not in ("original", "dub", "both"):
+    if req.mode not in ("original", "both"):
         raise HTTPException(status_code=400, detail="非法的 mode")
 
     q: "queue.Queue" = queue.Queue()
@@ -361,10 +361,8 @@ def make_video(job_id: str, req: VideoRequest):
         try:
             # 烧录一次即可：原声版直接是它，配音版只在其上换音轨。
             burned = _ensure_burned(job, req.sub_mode, style, q)
-            videos: dict = {}
-            if req.mode in ("original", "both"):
-                videos["original"] = _media_url(job_id, burned)
-            if req.mode in ("dub", "both"):
+            videos: dict = {"original": _media_url(job_id, burned)}
+            if req.mode == "both":
                 out = _ensure_dub(job, burned, req.sub_mode, style, q)
                 videos["dub"] = _media_url(job_id, out)
             q.put({"stage": "done", "result": {"videos": videos}})
