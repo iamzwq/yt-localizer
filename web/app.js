@@ -230,6 +230,10 @@ async function prepare() {
         ? `已准备${cachedTip}（注意：${result.warning}）`
         : `已准备完成${cachedTip}，可预览与下载。`,
     );
+
+    if ($("auto-export-check").checked) {
+      await exportVideo("both");
+    }
   } catch (err) {
     setStatus(err.message, true);
   } finally {
@@ -269,7 +273,14 @@ async function exportVideo(mode) {
     const videos = (result && result.videos) || {};
     if (!Object.keys(videos).length) throw new Error("未生成视频");
     renderExportLinks(videos);
-    $("export-status").textContent = "合成完成，点击下方链接下载。";
+
+    if ($("auto-export-check").checked) {
+      $("export-status").textContent = "合成完成，正在自动下载…";
+      await autoDownloadVideos(videos);
+      $("export-status").textContent = "合成完成，已自动下载。";
+    } else {
+      $("export-status").textContent = "合成完成，点击下方链接下载。";
+    }
   } catch (err) {
     $("export-status").textContent = err.message;
   } finally {
@@ -283,7 +294,20 @@ const VIDEO_LABELS = {
   dub: "下载：字幕 + 中文配音",
 };
 
-// 多文件自动下载会被浏览器拦截，改为渲染可点击的下载链接。
+// 依次触发浏览器下载，间隔一点时间以降低被拦截概率。
+async function autoDownloadVideos(videos) {
+  const entries = Object.entries(videos);
+  for (let i = 0; i < entries.length; i++) {
+    const a = document.createElement("a");
+    a.href = entries[i][1];
+    a.download = "";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    if (i < entries.length - 1) await new Promise((r) => setTimeout(r, 400));
+  }
+}
+
 function renderExportLinks(videos) {
   const box = $("export-links");
   box.innerHTML = "";
@@ -323,6 +347,8 @@ function bindEvents() {
   $("prepare-btn").addEventListener("click", prepare);
   $("clear-cache-btn").addEventListener("click", clearCache);
   $("player").addEventListener("timeupdate", renderSubtitle);
+  // 视频 metadata 加载后才有真实高度，需重新按比例计算字号。
+  $("player").addEventListener("loadedmetadata", applyOverlayStyle);
   $("preview-mode").addEventListener("change", () => {
     state.currentIndex = -1;
     renderSubtitle();

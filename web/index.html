@@ -29,6 +29,10 @@
             <input id="translate-check" type="checkbox" checked />
             翻译成中文
           </label>
+          <label class="flex items-center gap-2 text-sm">
+            <input id="auto-export-check" type="checkbox" checked />
+            自动烧录并导出（完成后自动下载）
+          </label>
           <button
             id="prepare-btn"
             class="rounded bg-sky-600 px-5 py-2 font-medium hover:bg-sky-500 disabled:opacity-50"
@@ -67,22 +71,7 @@
                 class="pointer-events-none absolute bottom-6 left-1/2 hidden max-w-[96%] -translate-x-1/2 whitespace-pre-wrap text-center leading-snug"
               ></div>
             </div>
-            <div class="mt-2 flex items-start gap-3">
-              <img
-                id="meta-thumbnail"
-                class="hidden h-16 w-28 shrink-0 rounded object-cover"
-                alt="视频缩略图"
-              />
-              <div>
-                <p id="meta" class="text-sm text-slate-400"></p>
-                <a
-                  id="meta-source"
-                  class="hidden text-sm text-sky-400 hover:underline"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                ></a>
-              </div>
-            </div>
+            <p id="meta" class="mt-2 text-sm text-slate-400"></p>
           </div>
 
           <!-- 样式与下载 -->
@@ -166,6 +155,12 @@
                   class="rounded bg-emerald-600 px-3 py-2 text-sm hover:bg-emerald-500 disabled:opacity-50"
                 >
                   字幕 + 原声
+                </button>
+                <button
+                  id="export-dub"
+                  class="rounded bg-emerald-600 px-3 py-2 text-sm hover:bg-emerald-500 disabled:opacity-50"
+                >
+                  字幕 + 中文配音
                 </button>
                 <button
                   id="export-both"
