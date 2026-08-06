@@ -11,7 +11,8 @@
 """
 
 import json
-from typing import Any, Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Callable, Dict, List, Optional
 
 from ..translate import (
     CallLLM,
@@ -266,11 +267,15 @@ def ai_format_subtitles(
     max_retries: int = 3,
     temperature: float = 0.0,
     timeout: int = 60,
+    concurrency: int = 4,
+    progress: Optional[Callable[[int, int], None]] = None,
 ) -> List[Cue]:
     """AI 断句 + 翻译合并主入口；逐块校验，失败部分自动降级为规则断句。
 
     成功的 cue 自带 ``translation`` 字段；降级部分没有该字段，调用方需要
     对缺失 ``translation`` 的 cue 再跑一次 ``translate_cues``。
+    分块之间互不依赖，用 ``concurrency`` 个线程并发请求缩短多分块视频的总耗时。
+    ``progress(done, total)`` 按完成顺序（而非提交顺序）回调，用于上报断句进度。
     """
     if not flat_events:
         return []
@@ -284,7 +289,26 @@ def ai_format_subtitles(
         timeout=timeout,
     )
 
+    chunks = chunk_events(flat_events, max_chunk_chars)
+    total = len(chunks)
+    if total == 0:
+        return []
+
+    def _one(i: int) -> Any:
+        return i, _process_chunk(chunks[i], call_llm, lang, target_lang, context, max_retries)
+
+    results: List[Optional[List[Cue]]] = [None] * total
+    done = 0
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as ex:
+        futures = [ex.submit(_one, i) for i in range(total)]
+        for future in as_completed(futures):
+            i, chunk_cues = future.result()
+            results[i] = chunk_cues
+            done += 1
+            if progress:
+                progress(done, total)
+
     cues: List[Cue] = []
-    for chunk in chunk_events(flat_events, max_chunk_chars):
-        cues.extend(_process_chunk(chunk, call_llm, lang, target_lang, context, max_retries))
+    for chunk_cues in results:
+        cues.extend(chunk_cues or [])
     return cues

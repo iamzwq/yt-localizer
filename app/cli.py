@@ -45,6 +45,9 @@ def run(
                 api_key=api_key,
                 model=model,
                 context=build_video_context(fetched.title, fetched.description),
+                progress=lambda done, total: print(
+                    f"AI 断句 {done}/{total}", file=sys.stderr
+                ),
             )
         except ValueError as err:
             print(f"警告：{err}，AI 断句降级为规则断句", file=sys.stderr)

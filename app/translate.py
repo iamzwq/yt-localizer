@@ -10,6 +10,7 @@ import json
 import os
 import re
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Dict, List, Optional
 
 from . import config  # noqa: F401  导入即加载 .env
@@ -213,11 +214,13 @@ def translate_cues(
     temperature: float = 0.0,
     timeout: int = 60,
     context: Optional[str] = None,
+    concurrency: int = 4,
     progress: Optional[Callable[[int, int], None]] = None,
 ) -> List[Cue]:
     """就地填充每条 cue 的 ``translation`` 字段并返回。
 
-    ``progress(done, total)`` 在每批完成后回调，用于上报翻译进度。
+    批次之间互不依赖，用 ``concurrency`` 个线程并发翻译缩短多批次时的总耗时。
+    ``progress(done, total)`` 按完成顺序（而非提交顺序）回调，用于上报翻译进度。
     """
     if not cues:
         return cues
@@ -232,16 +235,24 @@ def translate_cues(
     )
 
     total = len(cues)
-    done = 0
-    for group in chunk_indices(cues, max_items, max_chars):
+    groups = chunk_indices(cues, max_items, max_chars)
+
+    def _one(group: List[int]) -> Any:
         texts = [str(cues[i].get("text") or "") for i in group]
         translations = translate_batch(
             texts, call_llm, target_lang=target_lang, max_retries=max_retries, context=context
         )
-        for i, translation in zip(group, translations):
-            cues[i]["translation"] = translation
-        done += len(group)
-        if progress:
-            progress(done, total)
+        return group, translations
+
+    done = 0
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as ex:
+        futures = [ex.submit(_one, group) for group in groups]
+        for future in as_completed(futures):
+            group, translations = future.result()
+            for i, translation in zip(group, translations):
+                cues[i]["translation"] = translation
+            done += len(group)
+            if progress:
+                progress(done, total)
 
     return cues

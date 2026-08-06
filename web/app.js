@@ -112,6 +112,9 @@ function renderStage(scope, msg) {
   if (msg.stage === "download" && msg.pct != null) {
     text = `下载视频 ${msg.pct}%`;
     pct = msg.pct;
+  } else if (msg.stage === "segment" && msg.total) {
+    text = `AI 断句 ${msg.done}/${msg.total}`;
+    pct = Math.round((msg.done * 100) / msg.total);
   } else if (msg.stage === "translate" && msg.total) {
     text = `翻译 ${msg.done}/${msg.total}`;
     pct = Math.round((msg.done * 100) / msg.total);

@@ -120,6 +120,24 @@ def test_ai_format_subtitles_empty_input():
     assert ai_format_subtitles([], "en", call_llm=lambda m: "[]") == []
 
 
+def test_ai_format_subtitles_reports_progress_per_chunk():
+    events = _hello_world_events()
+
+    def call_llm(_messages):
+        return json.dumps([{"e": 1, "o": "Hello world.", "t": "你好世界。"}], ensure_ascii=False)
+
+    calls = []
+    # max_chunk_chars 设小一点，强制拆成两个分块，验证逐块回调。
+    ai_format_subtitles(
+        events,
+        "en",
+        call_llm=call_llm,
+        max_chunk_chars=11,
+        progress=lambda done, total: calls.append((done, total)),
+    )
+    assert calls == [(1, 2), (2, 2)]
+
+
 def test_ai_format_subtitles_success_uses_ai_translation():
     events = _hello_world_events()
 

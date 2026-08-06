@@ -288,6 +288,9 @@ def prepare(req: PrepareRequest):
                         fetched.lang,
                         model=req.model or DEFAULT_MODEL,
                         context=build_video_context(fetched.title, fetched.description),
+                        progress=lambda done, total: q.put(
+                            {"stage": "segment", "done": done, "total": total}
+                        ),
                     )
                 except ValueError as err:
                     warning = str(err)  # 缺 API Key：整段降级为规则断句
