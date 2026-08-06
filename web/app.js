@@ -274,6 +274,7 @@ async function prepare() {
         ? `已准备${cachedTip}（注意：${result.warning}）`
         : `已准备完成${cachedTip}，可预览与下载。`,
     );
+    refreshCacheSize();
 
     if ($("auto-export-check").checked) {
       await exportVideo("both");
@@ -366,6 +367,27 @@ function renderExportLinks(videos) {
   box.classList.remove("hidden");
 }
 
+function formatBytes(bytes) {
+  if (!bytes) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  const value = bytes / 1024 ** i;
+  return `${i === 0 ? value : value.toFixed(1)} ${units[i]}`;
+}
+
+// 拉取缓存总体积，展示在“清理缓存”按钮上，方便直观判断要不要手动清理。
+async function refreshCacheSize() {
+  const btn = $("clear-cache-btn");
+  try {
+    const res = await fetch("/api/cache");
+    const data = await res.json();
+    if (!res.ok) return;
+    btn.textContent = `清理缓存（${formatBytes(data.total_bytes)}）`;
+  } catch {
+    btn.textContent = "清理缓存";
+  }
+}
+
 async function clearCache() {
   if (!confirm("确定清空所有已下载/翻译的缓存？")) return;
   const btn = $("clear-cache-btn");
@@ -379,6 +401,7 @@ async function clearCache() {
     state.currentIndex = -1;
     lockWorkspace();
     setStatus(`已清理 ${data.cleared} 项缓存。`);
+    await refreshCacheSize();
   } catch (err) {
     setStatus(err.message, true);
   } finally {
@@ -424,3 +447,4 @@ function bindEvents() {
 }
 
 bindEvents();
+refreshCacheSize();

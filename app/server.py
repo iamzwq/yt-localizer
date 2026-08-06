@@ -125,6 +125,18 @@ def _media_url(job_id: str, path: str) -> str:
     return f"/media/{job_id}/{os.path.basename(path)}"
 
 
+def _dir_size(path: str) -> int:
+    """递归统计目录占用字节数，跳过无法访问的文件/软链接异常。"""
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            try:
+                total += os.path.getsize(os.path.join(root, name))
+            except OSError:
+                continue
+    return total
+
+
 def _ensure_burned(job: dict, sub_mode: str, style: SubtitleStyle, q: "queue.Queue") -> str:
     """烧录一次得到“字幕+原声”视频，相同字幕/样式时复用，避免重复烧录。
 
@@ -401,8 +413,9 @@ def make_video(job_id: str, req: VideoRequest):
 
 @app.get("/api/cache")
 def list_cache():
-    """列出已缓存的任务（供 UI 展示与清理）。"""
+    """列出已缓存的任务及占用体积（供 UI 展示与清理）。"""
     items = []
+    total_bytes = 0
     for name in sorted(os.listdir(WORKSPACE)):
         job_dir = os.path.join(WORKSPACE, name)
         if not os.path.isdir(job_dir):
@@ -411,15 +424,18 @@ def list_cache():
         if not manifest:
             continue
         meta = manifest.get("meta") or {}
+        size = _dir_size(job_dir)
+        total_bytes += size
         items.append(
             {
                 "job_id": name,
                 "url": manifest.get("url", ""),
                 "title": meta.get("title", ""),
                 "translated": bool(manifest.get("translated")),
+                "bytes": size,
             }
         )
-    return {"items": items}
+    return {"items": items, "total_bytes": total_bytes}
 
 
 @app.delete("/api/cache")
