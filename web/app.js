@@ -223,7 +223,11 @@ async function prepare() {
     const res = await fetch("/api/prepare", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, translate: $("translate-check").checked }),
+      body: JSON.stringify({
+        url,
+        translate: $("translate-check").checked,
+        ai_segment: $("translate-check").checked && $("ai-segment-check").checked,
+      }),
     });
     if (!res.ok || !res.body) {
       const data = await res.json().catch(() => ({}));
@@ -386,6 +390,15 @@ function bindEvents() {
   $("prepare-btn").addEventListener("click", prepare);
   $("clear-cache-btn").addEventListener("click", clearCache);
   $("player").addEventListener("timeupdate", renderSubtitle);
+
+  // AI 断句依赖翻译，未勾选翻译时禁用并取消勾选。
+  const syncAiSegmentAvailability = () => {
+    const enabled = $("translate-check").checked;
+    $("ai-segment-wrap").classList.toggle("disabled", !enabled);
+    if (!enabled) $("ai-segment-check").checked = false;
+  };
+  $("translate-check").addEventListener("change", syncAiSegmentAvailability);
+  syncAiSegmentAvailability();
   // 视频 metadata 加载后才有真实高度，需重新按比例计算字号。
   $("player").addEventListener("loadedmetadata", applyOverlayStyle);
   $("preview-mode").addEventListener("change", () => {

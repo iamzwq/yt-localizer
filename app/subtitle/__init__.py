@@ -10,6 +10,7 @@
 
 from .clean import clean_timed_text
 from .prepare import FlatEvent, PreparedEvents, prepare_timed_text_events
+from .ai_segment import ai_format_subtitles
 from .segment import (
     Cue,
     format_subtitles,
@@ -25,6 +26,7 @@ __all__ = [
     "PreparedEvents",
     "FlatEvent",
     "format_subtitles",
+    "ai_format_subtitles",
     "process_subtitles",
     "is_quality_poor",
     "Cue",

@@ -15,8 +15,8 @@ import sys
 
 from .fetch import SubtitleNotFoundError, fetch_subtitle
 from .srt import MODE_BILINGUAL, MODE_ORIGINAL, MODE_TRANSLATED, build_srt
-from .subtitle import format_subtitles, prepare_timed_text_events
-from .translate import DEFAULT_MODEL, translate_cues
+from .subtitle import ai_format_subtitles, format_subtitles, prepare_timed_text_events
+from .translate import DEFAULT_MODEL, build_video_context, translate_cues
 
 
 def run(
@@ -26,6 +26,7 @@ def run(
     mode: str = MODE_ORIGINAL,
     api_key=None,
     model: str = DEFAULT_MODEL,
+    ai_segment: bool = False,
 ) -> int:
     try:
         fetched = fetch_subtitle(url, prefer_lang)
@@ -34,14 +35,37 @@ def run(
         return 2
 
     prepared = prepare_timed_text_events(fetched.events)
-    cues = format_subtitles(prepared.flat_events, fetched.lang)
+    wants_translation = mode in (MODE_TRANSLATED, MODE_BILINGUAL)
 
-    if mode in (MODE_TRANSLATED, MODE_BILINGUAL):
+    if wants_translation and ai_segment:
         try:
-            translate_cues(cues, api_key=api_key, model=model)
+            cues = ai_format_subtitles(
+                prepared.flat_events,
+                fetched.lang,
+                api_key=api_key,
+                model=model,
+                context=build_video_context(fetched.title, fetched.description),
+            )
         except ValueError as err:
-            print(f"错误：{err}", file=sys.stderr)
-            return 3
+            print(f"警告：{err}，AI 断句降级为规则断句", file=sys.stderr)
+            cues = format_subtitles(prepared.flat_events, fetched.lang)
+    else:
+        cues = format_subtitles(prepared.flat_events, fetched.lang)
+
+    if wants_translation:
+        # AI 断句已自带译文的 cue 无需重复翻译，只补跑规则兜底部分。
+        pending = [c for c in cues if "translation" not in c]
+        if pending:
+            try:
+                translate_cues(
+                    pending,
+                    api_key=api_key,
+                    model=model,
+                    context=build_video_context(fetched.title, fetched.description),
+                )
+            except ValueError as err:
+                print(f"错误：{err}", file=sys.stderr)
+                return 3
 
     srt_text = build_srt(cues, mode=mode)
     with open(output, "w", encoding="utf-8") as f:
@@ -67,8 +91,15 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--api-key", default=None, help="deepseek API Key（默认取环境变量）")
     parser.add_argument("--model", default=DEFAULT_MODEL, help="deepseek 模型名")
+    parser.add_argument(
+        "--ai-segment",
+        action="store_true",
+        help="用 AI 断句+翻译合并替代规则断句（仅 translated/bilingual 模式下生效，失败自动降级）",
+    )
     args = parser.parse_args(argv)
-    return run(args.url, args.output, args.lang, args.mode, args.api_key, args.model)
+    return run(
+        args.url, args.output, args.lang, args.mode, args.api_key, args.model, args.ai_segment
+    )
 
 
 if __name__ == "__main__":

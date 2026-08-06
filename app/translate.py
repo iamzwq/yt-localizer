@@ -166,6 +166,39 @@ def _default_call_llm(
     return data["choices"][0]["message"]["content"]
 
 
+def resolve_call_llm(
+    call_llm: Optional[CallLLM] = None,
+    *,
+    api_key: Optional[str] = None,
+    model: str = DEFAULT_MODEL,
+    base_url: str = DEFAULT_BASE_URL,
+    temperature: float = 0.0,
+    timeout: int = 60,
+) -> CallLLM:
+    """返回可用的 ``call_llm``；未注入时基于 DEEPSEEK_API_KEY 构造默认实现。
+
+    供 ``translate_cues`` 与 AI 断句模块共用，避免重复实现 HTTP 请求逻辑。
+    """
+    if call_llm is not None:
+        return call_llm
+
+    api_key = api_key or os.environ.get("DEEPSEEK_API_KEY")
+    if not api_key:
+        raise ValueError("缺少 DEEPSEEK_API_KEY（可用环境变量或参数传入）")
+
+    def _call(messages: List[Dict[str, str]]) -> str:
+        return _default_call_llm(
+            messages,
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            temperature=temperature,
+            timeout=timeout,
+        )
+
+    return _call
+
+
 def translate_cues(
     cues: List[Cue],
     *,
@@ -189,20 +222,14 @@ def translate_cues(
     if not cues:
         return cues
 
-    if call_llm is None:
-        api_key = api_key or os.environ.get("DEEPSEEK_API_KEY")
-        if not api_key:
-            raise ValueError("缺少 DEEPSEEK_API_KEY（可用环境变量或参数传入）")
-
-        def call_llm(messages: List[Dict[str, str]]) -> str:
-            return _default_call_llm(
-                messages,
-                api_key=api_key,
-                model=model,
-                base_url=base_url,
-                temperature=temperature,
-                timeout=timeout,
-            )
+    call_llm = resolve_call_llm(
+        call_llm,
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
+        temperature=temperature,
+        timeout=timeout,
+    )
 
     total = len(cues)
     done = 0

@@ -25,7 +25,7 @@ from .ass import SubtitleStyle
 from .burn import burn_subtitles
 from .fetch import SubtitleNotFoundError, fetch_subtitle
 from .srt import MODE_BILINGUAL, MODE_ORIGINAL, MODE_TRANSLATED, build_srt
-from .subtitle import format_subtitles, prepare_timed_text_events
+from .subtitle import ai_format_subtitles, format_subtitles, prepare_timed_text_events
 from .translate import DEFAULT_MODEL, build_video_context, translate_cues
 from .tts import build_dub_track, mux_dub_video
 from .video import download_video
@@ -45,6 +45,7 @@ class PrepareRequest(BaseModel):
     url: str
     lang: Optional[str] = None
     translate: bool = True
+    ai_segment: bool = False  # 用 AI 断句+翻译合并替代规则断句，仅 translate=True 时生效
     model: Optional[str] = None
     force: bool = False  # 忽略缓存强制重新下载
 
@@ -266,22 +267,39 @@ def prepare(req: PrepareRequest):
 
             q.put({"stage": "segment"})
             prepared = prepare_timed_text_events(fetched.events)
-            cues = format_subtitles(prepared.flat_events, fetched.lang)
 
             warning = None
-            if req.translate:
-                q.put({"stage": "translate", "done": 0, "total": len(cues)})
+            if req.translate and req.ai_segment:
                 try:
-                    translate_cues(
-                        cues,
+                    cues = ai_format_subtitles(
+                        prepared.flat_events,
+                        fetched.lang,
                         model=req.model or DEFAULT_MODEL,
                         context=build_video_context(fetched.title, fetched.description),
-                        progress=lambda done, total: q.put(
-                            {"stage": "translate", "done": done, "total": total}
-                        ),
                     )
                 except ValueError as err:
-                    warning = str(err)  # 缺 API Key：保留原文，前端提示
+                    warning = str(err)  # 缺 API Key：整段降级为规则断句
+                    cues = format_subtitles(prepared.flat_events, fetched.lang)
+            else:
+                cues = format_subtitles(prepared.flat_events, fetched.lang)
+
+            if req.translate and warning is None:
+                # AI 断句已自带译文的 cue 无需重复翻译，只补跑规则兜底部分。
+                pending = [c for c in cues if "translation" not in c]
+                done_ahead = len(cues) - len(pending)
+                q.put({"stage": "translate", "done": done_ahead, "total": len(cues)})
+                if pending:
+                    try:
+                        translate_cues(
+                            pending,
+                            model=req.model or DEFAULT_MODEL,
+                            context=build_video_context(fetched.title, fetched.description),
+                            progress=lambda done, total: q.put(
+                                {"stage": "translate", "done": done_ahead + done, "total": len(cues)}
+                            ),
+                        )
+                    except ValueError as err:
+                        warning = str(err)  # 缺 API Key：保留原文，前端提示
 
             meta = {
                 "title": fetched.title,

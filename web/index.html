@@ -172,6 +172,10 @@
         color: var(--color-text-muted);
         font-size: 0.85rem;
       }
+      .switch-wrap.disabled {
+        opacity: 0.45;
+        pointer-events: none;
+      }
 
       /* 导出方式：卡片式选项，替代纯色按钮堆叠 */
       .option-card {
@@ -316,6 +320,11 @@
               <input id="translate-check" type="checkbox" class="switch-input" checked />
               <span class="switch-track"><span class="switch-thumb"></span></span>
               <span class="switch-label">翻译成中文</span>
+            </label>
+            <label id="ai-segment-wrap" class="switch-wrap">
+              <input id="ai-segment-check" type="checkbox" class="switch-input" checked />
+              <span class="switch-track"><span class="switch-thumb"></span></span>
+              <span class="switch-label">AI 智能断句（更贴合语义，消耗更多 token）</span>
             </label>
             <label class="switch-wrap">
               <input
