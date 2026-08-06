@@ -13,7 +13,45 @@ const $ = (id) => document.getElementById(id);
 function setStatus(msg, isError = false) {
   const el = $("status");
   el.textContent = msg || "";
-  el.className = `mt-3 text-sm ${isError ? "text-rose-400" : "text-slate-400"}`;
+  el.classList.toggle("hidden", !msg);
+  el.classList.toggle("alert-error", isError);
+  el.classList.toggle("alert-info", !isError);
+}
+
+// 依次点亮 Step 1 进度里的阶段圆点。
+const PREPARE_STAGE_ORDER = ["download", "subtitle", "segment", "translate"];
+
+function resetStepChips() {
+  document
+    .querySelectorAll("#prepare-steps .step-chip")
+    .forEach((el) => el.classList.remove("active", "done"));
+}
+
+function updateStepChips(stage) {
+  const idx = PREPARE_STAGE_ORDER.indexOf(stage);
+  if (idx === -1) return;
+  PREPARE_STAGE_ORDER.forEach((s, i) => {
+    const el = document.querySelector(`#prepare-steps .step-chip[data-stage="${s}"]`);
+    if (!el) return;
+    el.classList.remove("active", "done");
+    if (i < idx) el.classList.add("done");
+    else if (i === idx) el.classList.add("active");
+  });
+}
+
+const WORKSPACE_SECTION_IDS = ["workspace-preview", "workspace-export"];
+
+// 第 1 步完成后解锁第 2/3 步卡片。
+function unlockWorkspace() {
+  WORKSPACE_SECTION_IDS.forEach((id) => $(id).classList.remove("locked"));
+  $("preview-lock-hint").classList.add("hidden");
+  $("export-lock-hint").classList.add("hidden");
+}
+
+function lockWorkspace() {
+  WORKSPACE_SECTION_IDS.forEach((id) => $(id).classList.add("locked"));
+  $("preview-lock-hint").classList.remove("hidden");
+  $("export-lock-hint").classList.remove("hidden");
 }
 
 // 阶段标签：SSE 事件 stage -> 中文文案
@@ -67,6 +105,7 @@ function hideBar(scope) {
 }
 
 function renderStage(scope, msg) {
+  if (scope === "prepare") updateStepChips(msg.stage);
   const label = (STAGE_LABELS[scope] || {})[msg.stage] || msg.stage;
   let text = `${label}…`;
   let pct = null;
@@ -176,6 +215,7 @@ async function prepare() {
 
   $("prepare-btn").disabled = true;
   setStatus("");
+  resetStepChips();
   setBar("prepare", "开始…", 0);
 
   let result = null;
@@ -221,7 +261,7 @@ async function prepare() {
       sourceLink.classList.add("hidden");
     }
 
-    $("workspace").classList.remove("hidden");
+    unlockWorkspace();
 
     applyOverlayStyle();
     const cachedTip = result.cached ? "（已使用缓存）" : "";
@@ -290,8 +330,8 @@ async function exportVideo(mode) {
 }
 
 const VIDEO_LABELS = {
-  original: "下载：字幕 + 原声",
-  dub: "下载：字幕 + 中文配音",
+  original: "⬇ 原声版",
+  dub: "⬇ 中文配音版",
 };
 
 // 依次触发浏览器下载，间隔一点时间以降低被拦截概率。
@@ -316,8 +356,7 @@ function renderExportLinks(videos) {
     a.href = url;
     a.download = "";
     a.textContent = VIDEO_LABELS[key] || `下载 ${key}`;
-    a.className =
-      "block rounded bg-sky-700 px-3 py-2 text-center text-sm hover:bg-sky-600";
+    a.className = "download-link";
     box.appendChild(a);
   });
   box.classList.remove("hidden");
@@ -334,7 +373,7 @@ async function clearCache() {
     state.jobId = null;
     state.cues = [];
     state.currentIndex = -1;
-    $("workspace").classList.add("hidden");
+    lockWorkspace();
     setStatus(`已清理 ${data.cleared} 项缓存。`);
   } catch (err) {
     setStatus(err.message, true);
