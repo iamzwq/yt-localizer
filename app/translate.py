@@ -19,7 +19,7 @@ Cue = Dict[str, Any]
 CallLLM = Callable[[List[Dict[str, str]]], str]
 
 # 模型与接口地址支持 .env 配置（DEEPSEEK_MODEL / DEEPSEEK_BASE_URL）。
-DEFAULT_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
+DEFAULT_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash")
 DEFAULT_BASE_URL = os.environ.get(
     "DEEPSEEK_BASE_URL", "https://api.deepseek.com/chat/completions"
 )

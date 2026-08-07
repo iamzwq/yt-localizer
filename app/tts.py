@@ -19,7 +19,7 @@ Cue = Dict[str, Any]
 
 logger = getLogger(__name__)
 
-DEFAULT_VOICE = "zh-CN-YunxiaNeural" # edge-tts --list-voices | grep "zh-"
+DEFAULT_VOICE = "zh-CN-YunyangNeural" # edge-tts --list-voices | grep "zh-"
 DEFAULT_SAMPLE_RATE = 44100
 
 # 含字母/数字/CJK/假名/谙文才可发音；纯标点符号（如 ♪、…、—）会让 edge-tts 返回空音频。
