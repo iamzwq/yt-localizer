@@ -287,7 +287,6 @@ def prepare(req: PrepareRequest):
                         prepared.flat_events,
                         fetched.lang,
                         model=req.model or DEFAULT_MODEL,
-                        context=build_video_context(fetched.title, fetched.description),
                         progress=lambda done, total: q.put(
                             {"stage": "segment", "done": done, "total": total}
                         ),
@@ -299,22 +298,18 @@ def prepare(req: PrepareRequest):
                 cues = format_subtitles(prepared.flat_events, fetched.lang)
 
             if req.translate and warning is None:
-                # AI 断句已自带译文的 cue 无需重复翻译，只补跑规则兜底部分。
-                pending = [c for c in cues if "translation" not in c]
-                done_ahead = len(cues) - len(pending)
-                q.put({"stage": "translate", "done": done_ahead, "total": len(cues)})
-                if pending:
-                    try:
-                        translate_cues(
-                            pending,
-                            model=req.model or DEFAULT_MODEL,
-                            context=build_video_context(fetched.title, fetched.description),
-                            progress=lambda done, total: q.put(
-                                {"stage": "translate", "done": done_ahead + done, "total": len(cues)}
-                            ),
-                        )
-                    except ValueError as err:
-                        warning = str(err)  # 缺 API Key：保留原文，前端提示
+                q.put({"stage": "translate", "done": 0, "total": len(cues)})
+                try:
+                    translate_cues(
+                        cues,
+                        model=req.model or DEFAULT_MODEL,
+                        context=build_video_context(fetched.title, fetched.description),
+                        progress=lambda done, total: q.put(
+                            {"stage": "translate", "done": done, "total": total}
+                        ),
+                    )
+                except ValueError as err:
+                    warning = str(err)  # 缺 API Key：保留原文，前端提示
 
             meta = {
                 "title": fetched.title,

@@ -53,15 +53,21 @@ def build_messages(
 ) -> List[Dict[str, str]]:
     """构造严格要求 JSON 数组对齐输出的对话消息。"""
     system = (
-        f"你是专业字幕翻译。将输入 JSON 字符串数组中的每一条翻译成{target_lang}。\n"
-        "严格要求：\n"
-        "1. 只输出一个 JSON 数组，元素为译文字符串，禁止任何解释、前后缀或代码块围栏。\n"
-        "2. 输出数组长度必须与输入完全一致，顺序一一对应。\n"
-        "3. 每条独立翻译，不要合并、拆分或增删条目。\n"
-        "4. 口语自然、简洁，符合视频语境。"
+        f"You are a professional subtitle translator for tech/programming video content. "
+        f"Translate each string in the input JSON array into {target_lang}.\n"
+        "Strict requirements:\n"
+        "1. Output ONLY a single JSON array of translated strings — no explanations, "
+        "prefixes/suffixes, or markdown code fences.\n"
+        "2. The output array length must exactly match the input, in the same order.\n"
+        "3. Translate each item independently; do not merge, split, add, or remove items.\n"
+        "4. Keep technical terms, product/brand names, code identifiers, CLI commands, "
+        "file paths, keyboard shortcuts, and version numbers unchanged — do not translate "
+        "or transliterate them.\n"
+        "5. Keep terminology consistent across all items in this batch.\n"
+        "6. Natural, concise, colloquial style suitable for spoken video subtitles."
     )
     if context:
-        system += f"\n\n参考背景：{context}"
+        system += f"\n\nReference context: {context}"
     user = json.dumps(texts, ensure_ascii=False)
     return [
         {"role": "system", "content": system},
@@ -214,7 +220,7 @@ def translate_cues(
     temperature: float = 0.0,
     timeout: int = 60,
     context: Optional[str] = None,
-    concurrency: int = 4,
+    concurrency: int = 20,
     progress: Optional[Callable[[int, int], None]] = None,
 ) -> List[Cue]:
     """就地填充每条 cue 的 ``translation`` 字段并返回。

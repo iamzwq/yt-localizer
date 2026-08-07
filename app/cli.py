@@ -44,7 +44,6 @@ def run(
                 fetched.lang,
                 api_key=api_key,
                 model=model,
-                context=build_video_context(fetched.title, fetched.description),
                 progress=lambda done, total: print(
                     f"AI 断句 {done}/{total}", file=sys.stderr
                 ),
@@ -56,19 +55,16 @@ def run(
         cues = format_subtitles(prepared.flat_events, fetched.lang)
 
     if wants_translation:
-        # AI 断句已自带译文的 cue 无需重复翻译，只补跑规则兜底部分。
-        pending = [c for c in cues if "translation" not in c]
-        if pending:
-            try:
-                translate_cues(
-                    pending,
-                    api_key=api_key,
-                    model=model,
-                    context=build_video_context(fetched.title, fetched.description),
-                )
-            except ValueError as err:
-                print(f"错误：{err}", file=sys.stderr)
-                return 3
+        try:
+            translate_cues(
+                cues,
+                api_key=api_key,
+                model=model,
+                context=build_video_context(fetched.title, fetched.description),
+            )
+        except ValueError as err:
+            print(f"错误：{err}", file=sys.stderr)
+            return 3
 
     srt_text = build_srt(cues, mode=mode)
     with open(output, "w", encoding="utf-8") as f:

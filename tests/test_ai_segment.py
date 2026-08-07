@@ -61,7 +61,7 @@ def test_build_indexed_events_includes_pause():
 
 
 def test_build_ai_segment_messages_space_language_rule():
-    messages = build_ai_segment_messages([{"id": 0, "text": "hi"}], "en", target_lang="中文")
+    messages = build_ai_segment_messages([{"id": 0, "text": "hi"}], "en")
     assert "15" in messages[0]["content"]
     assert messages[1]["content"] == '[{"id": 0, "text": "hi"}]'
 
@@ -71,22 +71,20 @@ def test_build_ai_segment_messages_no_space_language_rule():
     assert "30" in messages[0]["content"]
 
 
-def test_build_ai_segment_messages_injects_context():
-    messages = build_ai_segment_messages([{"id": 0, "text": "hi"}], "en", context="视频背景X")
-    assert "视频背景X" in messages[0]["content"]
-
-
 # ---- parse_ai_segments ----
 
 
 def test_parse_ai_segments_valid():
-    content = json.dumps([{"e": 1, "o": "Hello world.", "t": "你好世界。"}])
-    assert parse_ai_segments(content) == [{"e": 1, "o": "Hello world.", "t": "你好世界。"}]
+    assert parse_ai_segments("[1, 8, 14]") == [1, 8, 14]
 
 
 def test_parse_ai_segments_strips_code_fence():
-    content = '```json\n[{"e": 0, "o": "hi", "t": "嗨"}]\n```'
-    assert parse_ai_segments(content) == [{"e": 0, "o": "hi", "t": "嗨"}]
+    content = "```json\n[8, 14]\n```"
+    assert parse_ai_segments(content) == [8, 14]
+
+
+def test_parse_ai_segments_accepts_integer_valued_floats():
+    assert parse_ai_segments("[8.0, 14.0]") == [8, 14]
 
 
 def test_parse_ai_segments_rejects_non_array():
@@ -96,10 +94,10 @@ def test_parse_ai_segments_rejects_non_array():
     assert parse_ai_segments(None) is None
 
 
-def test_parse_ai_segments_rejects_missing_or_wrong_type_fields():
-    assert parse_ai_segments('[{"e": "0", "o": "hi", "t": "嗨"}]') is None
-    assert parse_ai_segments('[{"e": 0, "o": "hi"}]') is None
-    assert parse_ai_segments('[{"o": "hi", "t": "嗨"}]') is None
+def test_parse_ai_segments_rejects_non_integer_elements():
+    assert parse_ai_segments('["8", "14"]') is None
+    assert parse_ai_segments("[8.5, 14]") is None
+    assert parse_ai_segments("[true, false]") is None
 
 
 # ---- ai_format_subtitles ----
@@ -124,7 +122,7 @@ def test_ai_format_subtitles_reports_progress_per_chunk():
     events = _hello_world_events()
 
     def call_llm(_messages):
-        return json.dumps([{"e": 1, "o": "Hello world.", "t": "你好世界。"}], ensure_ascii=False)
+        return json.dumps([1])
 
     calls = []
     # max_chunk_chars 设小一点，强制拆成两个分块，验证逐块回调。
@@ -138,23 +136,27 @@ def test_ai_format_subtitles_reports_progress_per_chunk():
     assert calls == [(1, 2), (2, 2)]
 
 
-def test_ai_format_subtitles_success_uses_ai_translation():
+def test_ai_format_subtitles_success_only_returns_text_no_translation():
     events = _hello_world_events()
 
     def call_llm(_messages):
-        return json.dumps(
-            [
-                {"e": 1, "o": "Hello world.", "t": "你好世界。"},
-                {"e": 3, "o": "Next one.", "t": "下一句。"},
-            ],
-            ensure_ascii=False,
-        )
+        return json.dumps([1, 3])
 
     cues = ai_format_subtitles(events, "en", call_llm=call_llm, max_chunk_chars=10000)
     assert cues == [
-        {"start": 0, "end": 1000, "text": "Hello world.", "translation": "你好世界。"},
-        {"start": 1100, "end": 2000, "text": "Next one.", "translation": "下一句。"},
+        {"start": 0, "end": 1000, "text": "Hello world."},
+        {"start": 1100, "end": 2000, "text": "Next one."},
     ]
+
+
+def test_ai_format_subtitles_joins_no_space_language_without_separator():
+    events = _flat([("你", 0, 300), ("好", 300, 600), ("。", 600, 900)])
+
+    def call_llm(_messages):
+        return json.dumps([2])
+
+    cues = ai_format_subtitles(events, "zh-CN", call_llm=call_llm, max_chunk_chars=10000)
+    assert cues == [{"start": 0, "end": 900, "text": "你好。"}]
 
 
 def test_ai_format_subtitles_falls_back_when_ai_returns_garbage():
@@ -170,20 +172,18 @@ def test_ai_format_subtitles_falls_back_when_ai_returns_garbage():
         events, "en", call_llm=call_llm, max_chunk_chars=10000, max_retries=2
     )
     assert cues == format_subtitles(events, "en")
-    assert all("translation" not in c for c in cues)
     # 整块解析完全失败时不会再触发尾部重试，只重试 max_retries 次。
     assert calls["n"] == 2
 
 
-def test_ai_format_subtitles_falls_back_when_coverage_mismatch():
+def test_ai_format_subtitles_falls_back_when_cutpoint_out_of_range():
     events = _hello_world_events()
 
     def call_llm(_messages):
-        return json.dumps([{"e": 3, "o": "完全不匹配的文本", "t": "无效"}], ensure_ascii=False)
+        return json.dumps([99])
 
     cues = ai_format_subtitles(events, "en", call_llm=call_llm, max_chunk_chars=10000, max_retries=1)
     assert cues == format_subtitles(events, "en")
-    assert all("translation" not in c for c in cues)
 
 
 def test_ai_format_subtitles_partial_coverage_then_tail_succeeds():
@@ -194,14 +194,14 @@ def test_ai_format_subtitles_partial_coverage_then_tail_succeeds():
         calls["n"] += 1
         payload = json.loads(messages[1]["content"])
         if len(payload) == 4:
-            return json.dumps([{"e": 1, "o": "Hello world.", "t": "你好世界。"}], ensure_ascii=False)
-        return json.dumps([{"e": 1, "o": "Next one.", "t": "下一句。"}], ensure_ascii=False)
+            return json.dumps([1])
+        return json.dumps([1])
 
     cues = ai_format_subtitles(events, "en", call_llm=call_llm, max_chunk_chars=10000)
     assert calls["n"] == 2
     assert cues == [
-        {"start": 0, "end": 1000, "text": "Hello world.", "translation": "你好世界。"},
-        {"start": 1100, "end": 2000, "text": "Next one.", "translation": "下一句。"},
+        {"start": 0, "end": 1000, "text": "Hello world."},
+        {"start": 1100, "end": 2000, "text": "Next one."},
     ]
 
 
@@ -211,16 +211,11 @@ def test_ai_format_subtitles_partial_coverage_tail_fails_falls_back_for_remainde
     def call_llm(messages):
         payload = json.loads(messages[1]["content"])
         if len(payload) == 4:
-            return json.dumps([{"e": 1, "o": "Hello world.", "t": "你好世界。"}], ensure_ascii=False)
+            return json.dumps([1])
         return "still garbage"
 
     cues = ai_format_subtitles(events, "en", call_llm=call_llm, max_chunk_chars=10000, max_retries=1)
-    assert cues[0] == {
-        "start": 0,
-        "end": 1000,
-        "text": "Hello world.",
-        "translation": "你好世界。",
-    }
+    assert cues[0] == {"start": 0, "end": 1000, "text": "Hello world."}
     remainder = events[2:]
     assert cues[1:] == format_subtitles(remainder, "en")
-    assert all("translation" not in c for c in cues[1:])
+
