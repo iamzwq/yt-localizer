@@ -201,9 +201,22 @@ def prepare(req: PrepareRequest):
 
     def work() -> None:
         try:
-            # 命中缓存：同一 url 已下载/翻译过，直接复用磁盘上的视频与 cues。
             manifest = None if req.force else _load_manifest(job_dir)
-            if manifest and os.path.exists(os.path.join(job_dir, manifest.get("video") or "")):
+            want_ai = bool(req.translate and req.ai_segment)
+            video_exists = bool(
+                manifest and os.path.exists(os.path.join(job_dir, manifest.get("video") or ""))
+            )
+
+            # 断句方式匹配：缓存 cues 可直接复用（含 AI 断句结果与翻译）。
+            # 老 manifest 无 ai_segment 字段视为规则断句（False），行为不变。
+            seg_match = bool(
+                manifest
+                and bool(manifest.get("ai_segment")) == want_ai
+                and (not want_ai or manifest.get("ai_model", "") == (req.model or DEFAULT_MODEL))
+            )
+
+            if video_exists and seg_match:
+                # 完全命中：同一 url 且断句方式一致，直接复用磁盘上的视频与 cues。
                 cues = manifest.get("cues") or []
                 meta = manifest.get("meta") or {}
                 warning = None
@@ -248,31 +261,42 @@ def prepare(req: PrepareRequest):
                 )
                 return
 
-            def hook(d: dict) -> None:
-                if d.get("status") != "downloading":
-                    return
-                total = d.get("total_bytes") or d.get("total_bytes_estimate")
-                got = d.get("downloaded_bytes") or 0
-                frac = got / total if total else 0
-                # bestvideo+bestaudio 会分别下载两条流、各自 0→100；
-                # 按编解码信息把视频流映射到 0-90%、音频流映射到 90-100%，合成单条进度。
-                info = d.get("info_dict") or {}
-                v, a = info.get("vcodec"), info.get("acodec")
-                has_v = bool(v) and v != "none"
-                has_a = bool(a) and a != "none"
-                if has_v and not has_a:
-                    overall = frac * 0.9
-                elif has_a and not has_v:
-                    overall = 0.9 + frac * 0.1
-                else:
-                    overall = frac
-                q.put({"stage": "download", "pct": int(overall * 100)})
+            # 视频已存在但断句方式不匹配（如切换了 ai_segment 开关/模型）：
+            # 复用视频跳过下载，重新拉字幕并断句。
+            if video_exists:
+                meta = manifest.get("meta") or {}
+                video_path = os.path.join(job_dir, manifest["video"])
+                duration = meta.get("duration") or 0
+                thumbnail = meta.get("thumbnail") or ""
+            else:
+                def hook(d: dict) -> None:
+                    if d.get("status") != "downloading":
+                        return
+                    total = d.get("total_bytes") or d.get("total_bytes_estimate")
+                    got = d.get("downloaded_bytes") or 0
+                    frac = got / total if total else 0
+                    # bestvideo+bestaudio 会分别下载两条流、各自 0→100；
+                    # 按编解码信息把视频流映射到 0-90%、音频流映射到 90-100%，合成单条进度。
+                    info = d.get("info_dict") or {}
+                    v, a = info.get("vcodec"), info.get("acodec")
+                    has_v = bool(v) and v != "none"
+                    has_a = bool(a) and a != "none"
+                    if has_v and not has_a:
+                        overall = frac * 0.9
+                    elif has_a and not has_v:
+                        overall = 0.9 + frac * 0.1
+                    else:
+                        overall = frac
+                    q.put({"stage": "download", "pct": int(overall * 100)})
 
-            q.put({"stage": "download", "pct": 0})
-            downloaded = download_video(
-                req.url, output=os.path.join(job_dir, "source.%(ext)s"), progress_hook=hook
-            )
-            q.put({"stage": "download", "pct": 100})
+                q.put({"stage": "download", "pct": 0})
+                downloaded = download_video(
+                    req.url, output=os.path.join(job_dir, "source.%(ext)s"), progress_hook=hook
+                )
+                q.put({"stage": "download", "pct": 100})
+                video_path = downloaded.path
+                duration = downloaded.duration
+                thumbnail = downloaded.thumbnail
 
             q.put({"stage": "subtitle"})
             fetched = fetch_subtitle(req.url, req.lang)
@@ -315,14 +339,15 @@ def prepare(req: PrepareRequest):
                 "title": fetched.title,
                 "lang": fetched.lang,
                 "kind": fetched.kind,
-                "duration": downloaded.duration or fetched.duration,
+                "duration": duration or fetched.duration,
                 "description": (fetched.description or "")[:1000],
                 "source_url": req.url,
-                "thumbnail": downloaded.thumbnail,
+                "thumbnail": thumbnail,
             }
+            used_ai = bool(want_ai and warning is None)
             _JOBS[job_id] = {
                 "dir": job_dir,
-                "video": downloaded.path,
+                "video": video_path,
                 "cues": cues,
                 "meta": meta,
             }
@@ -330,9 +355,13 @@ def prepare(req: PrepareRequest):
                 job_dir,
                 {
                     "url": req.url,
-                    "video": os.path.basename(downloaded.path),
+                    "video": os.path.basename(video_path),
                     "cues": cues,
                     "translated": bool(req.translate and warning is None),
+                    # 记录断句方式：缓存命中时校验 ai_segment 开关/模型一致，
+                    # 避免切开关后复用错误断句方式的缓存结果。
+                    "ai_segment": used_ai,
+                    "ai_model": (req.model or DEFAULT_MODEL) if used_ai else "",
                     "meta": meta,
                 },
             )
@@ -345,10 +374,10 @@ def prepare(req: PrepareRequest):
                         "title": fetched.title,
                         "lang": fetched.lang,
                         "kind": fetched.kind,
-                        "duration": downloaded.duration or fetched.duration,
-                        "video_url": _media_url(job_id, downloaded.path),
+                        "duration": duration or fetched.duration,
+                        "video_url": _media_url(job_id, video_path),
                         "source_url": req.url,
-                        "thumbnail": downloaded.thumbnail,
+                        "thumbnail": thumbnail,
                         "cues": cues,
                         "warning": warning,
                         "cached": False,

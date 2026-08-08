@@ -60,10 +60,15 @@ def build_messages(
         "prefixes/suffixes, or markdown code fences.\n"
         "2. The output array length must exactly match the input, in the same order.\n"
         "3. Translate each item independently; do not merge, split, add, or remove items.\n"
-        "4. Keep technical terms, product/brand names, code identifiers, CLI commands, "
-        "file paths, keyboard shortcuts, and version numbers unchanged — do not translate "
-        "or transliterate them.\n"
-        "5. Keep terminology consistent across all items in this batch.\n"
+        "4. Translate algorithm and data-structure terms into Chinese: e.g. binary search → "
+        "二分查找, recursion → 递归, hash table → 哈希表, merge sort → 归并排序, quick sort → "
+        "快速排序, linked list → 链表, stack → 栈, tree → 树, array → 数组, dynamic programming → "
+        "动态规划, backtracking → 回溯, sliding window → 滑动窗口, Dijkstra → 迪杰斯特拉, "
+        "Fibonacci → 斐波那契, memoization → 记忆化. Keep unchanged ONLY these: code identifiers, "
+        "variable/function names, CLI commands, file paths, keyboard shortcuts, version numbers, "
+        "and product/brand names (e.g. Python, git, npm install, boot.dev, SQL).\n"
+        "5. Keep translated terminology consistent across all items in this batch: once you "
+        "translate an algorithm term into Chinese, use the same Chinese term everywhere.\n"
         "6. Natural, concise, colloquial style suitable for spoken video subtitles."
     )
     if context:
@@ -116,13 +121,32 @@ def _try_json_array(text: str) -> Optional[list]:
 
 
 def parse_translation_response(content: str, expected_n: int) -> Optional[List[str]]:
-    """解析译文数组，长度不符或非法则返回 None（触发重试）。"""
+    """解析译文数组，长度不符或非法则返回 None（触发重试）。
+
+    兼容两种模型输出格式：
+    - 纯字符串数组：``["你好", "世界"]``
+    - 对象数组（模型偶发行为）：``[{"translate": "你好"}, ...]``，提取
+      ``translate``/``translation``/``t`` 键的值。
+    """
     if not content:
         return None
     data = _try_json_array(_strip_code_fence(str(content)))
     if data is None or len(data) != expected_n:
         return None
-    return [str(item) for item in data]
+
+    result: List[str] = []
+    for item in data:
+        if isinstance(item, str):
+            result.append(item)
+        elif isinstance(item, dict):
+            value = item.get("translate") or item.get("translation") or item.get("t")
+            if isinstance(value, str):
+                result.append(value)
+            else:
+                return None  # 对象里没有可识别的译文键，视为非法触发重试
+        else:
+            return None
+    return result
 
 
 def translate_batch(
@@ -180,7 +204,7 @@ def resolve_call_llm(
     model: str = DEFAULT_MODEL,
     base_url: str = DEFAULT_BASE_URL,
     temperature: float = 0.0,
-    timeout: int = 60,
+    timeout: int = 180,
 ) -> CallLLM:
     """返回可用的 ``call_llm``；未注入时基于 DEEPSEEK_API_KEY 构造默认实现。
 
@@ -218,9 +242,9 @@ def translate_cues(
     max_chars: int = 1500,
     max_retries: int = 3,
     temperature: float = 0.0,
-    timeout: int = 60,
+    timeout: int = 180,
     context: Optional[str] = None,
-    concurrency: int = 20,
+    concurrency: int = 40,
     progress: Optional[Callable[[int, int], None]] = None,
 ) -> List[Cue]:
     """就地填充每条 cue 的 ``translation`` 字段并返回。

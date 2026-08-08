@@ -72,6 +72,30 @@ def test_format_subtitles_splits_long_sentence():
     assert len(cues) > 1
 
 
+def test_format_subtitles_splits_on_word_count_without_punctuation():
+    """无标点、字符数未超阈值但词数超限（>15 词）的长句也应二次拆分。
+
+    首次扫描时词数上限依赖逗号不生效，这里验证二次拆分阶段按词数触发。
+    """
+    # 20 个 "one"：字符数 79 < 100，词数 20 > 15，仅词数维度触发。
+    events = _words(
+        [(w, i * 100, i * 100 + 90) for i, w in enumerate(("one",) * 20)]
+    )
+    cues = format_subtitles(events, "en")
+    assert len(cues) > 1
+    assert max(len(c["text"].split()) for c in cues) <= 15
+
+
+def test_format_subtitles_keeps_short_word_count_sentence():
+    """12 词无标点句子字符数/词数均未超限，保持单条不切。"""
+    events = _words(
+        [(w, i * 100, i * 100 + 90) for i, w in enumerate(("one",) * 12)]
+    )
+    cues = format_subtitles(events, "en")
+    assert len(cues) == 1
+    assert len(cues[0]["text"].split()) == 12
+
+
 def test_is_quality_poor():
     good = _words([("short", 0, 1)])
     assert not is_quality_poor(good, 5, 0.5)

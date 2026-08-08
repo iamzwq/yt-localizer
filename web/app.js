@@ -54,6 +54,32 @@ function lockWorkspace() {
   $("export-lock-hint").classList.remove("hidden");
 }
 
+// 开始处理新视频前清空 Step 2/3 中上一个视频的预览与导出内容。
+function resetWorkspace() {
+  state.jobId = null;
+  state.cues = [];
+  state.currentIndex = -1;
+
+  $("player").removeAttribute("src");
+  $("subtitle-overlay").classList.add("hidden");
+  $("subtitle-overlay").textContent = "";
+
+  $("meta").textContent = "";
+  $("meta-source").classList.add("hidden");
+  $("meta-source").textContent = "";
+
+  const thumb = $("meta-thumbnail");
+  thumb.classList.add("hidden");
+  thumb.removeAttribute("src");
+
+  const links = $("export-links");
+  links.classList.add("hidden");
+  links.innerHTML = "";
+  $("export-status").textContent = "";
+
+  lockWorkspace();
+}
+
 // 阶段标签：SSE 事件 stage -> 中文文案
 const STAGE_LABELS = {
   prepare: {
@@ -215,6 +241,8 @@ function renderSubtitle() {
 async function prepare() {
   const url = $("url-input").value.trim();
   if (!url) return setStatus("请输入视频链接", true);
+
+  resetWorkspace(); // 清空上一个视频的预览/导出内容，避免新任务未完成时残留旧信息
 
   $("prepare-btn").disabled = true;
   setStatus("");
@@ -440,9 +468,7 @@ function bindEvents() {
     $("bg-opacity-val").textContent = e.target.value;
     applyOverlayStyle();
   });
-  ["text-color", "bg-color"].forEach((id) =>
-    $(id).addEventListener("input", applyOverlayStyle),
-  );
+  ["text-color", "bg-color"].forEach((id) => $(id).addEventListener("input", applyOverlayStyle));
   window.addEventListener("resize", applyOverlayStyle);
 
   $("export-original").addEventListener("click", () => exportVideo("original"));

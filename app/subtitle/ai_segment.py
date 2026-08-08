@@ -13,6 +13,7 @@
 """
 
 import json
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Dict, List, Optional
 
@@ -34,39 +35,30 @@ _NO_SPACE_LENGTH_RULE = (
     "This language has no spaces between words; each segment must not exceed 30 source characters."
 )
 
-_PROMPT_TEMPLATE = """You are a professional subtitle segmentation assistant for tech/programming \
-video transcripts. The input is a word-level JSON array from a video transcript; each element \
-looks like {"id": <int>, "text": "<word>", "pauseMs": <optional gap in ms after this word>}, with \
-id starting from 0 and increasing strictly.
+_PROMPT_TEMPLATE = """You are a subtitle segmentation assistant for tech/programming video \
+transcripts. Input is a word-level JSON array: each element is {"id": <int>, "text": "<word>", \
+"pauseMs": <optional gap in ms after this word>}, ids start at 0 and strictly increase.
 
-Task: split this transcript into semantically complete, subtitle-friendly sentence segments.
+Task: split the transcript into semantically complete, subtitle-friendly segments.
 
-Strict output contract:
-1. Output ONLY a JSON array of integers (no quotes, not strings). Each integer is the id of the
-   last word in a segment, in strictly increasing order. The first segment starts at id 0
-   (see example below).
-2. No markdown code fences, no explanations, no prefix/suffix text, and no original text or
-   translation in the output.
-3. Every id in the input must be covered exactly once: the last number in the array must equal
-   the input's maximum id.
-4. Length limit: __LENGTH_RULE__
-5. If a sentence exceeds the length limit, split it at a clause, comma, conjunction, or natural
-   phrase boundary; the length limit takes priority over keeping a grammatically complete
-   sentence intact.
-6. Do not merge two complete sentences into one segment; terminal punctuation (if present in the
-   source) should usually end a segment.
-7. Do not split a technical term, code identifier, CLI command, file path, or product name across
-   two segments (e.g. keep "machine learning", "npm install", "kubectl apply -f" together).
-8. "pauseMs" is the gap in milliseconds after this word; a missing field means there is no
-   notable pause (the gap is zero or negligible) — do not infer a pause when it's absent. Larger
-   values suggest a stronger sentence boundary, but grammatical and semantic completeness always
-   take priority over pause duration.
-9. Before returning, double check: ids are strictly increasing and the array covers up to the
-   input's maximum id.
+Output contract (strict):
+- Output ONLY a JSON array of integers (no quotes, not strings): each integer is the id of the
+  LAST word in a segment, in strictly increasing order; the first segment starts at id 0.
+- No code fences, no explanations, no prefix/suffix, no original text or translation.
+- Every id must be covered exactly once: the last integer must equal the input's maximum id.
+- Length limit: __LENGTH_RULE__
+- If a sentence exceeds the limit, split at a clause/comma/conjunction/phrase boundary; the
+  limit takes priority over sentence completeness.
+- Do not merge two complete sentences into one segment; terminal punctuation usually ends one.
+- Do not split technical terms, code identifiers, CLI commands, file paths, or product names
+  (keep e.g. "machine learning", "npm install", "kubectl apply -f").
+- "pauseMs" is the gap in ms after this word; a missing field means no notable pause — do not
+  infer one. Larger values suggest a stronger boundary, but grammar and semantics always win.
+- Double check before returning: ids strictly increasing and the array covers the max id.
 
 Example:
-Input: [{"id":0,"text":"Once"},{"id":1,"text":"the"},{"id":2,"text":"assets"},{"id":3,"text":"are"},{"id":4,"text":"ready,"},{"id":5,"text":"open"},{"id":6,"text":"the"},{"id":7,"text":"storyboard"},{"id":8,"text":"tab.","pauseMs":850},{"id":9,"text":"This"},{"id":10,"text":"is"},{"id":11,"text":"where"},{"id":12,"text":"everything"},{"id":13,"text":"comes"},{"id":14,"text":"together."}]
-Output: [8, 14] (the first segment covers id 0-8, the second covers 9-14)"""
+Input: [{"id":0,"text":"Hello"},{"id":1,"text":"world."},{"id":2,"text":"This"},{"id":3,"text":"is"},{"id":4,"text":"next."}]
+Output: [1, 4] (segment 1 covers id 0-1, segment 2 covers id 2-4)"""
 
 
 def _is_no_space_lang(lang: Optional[str]) -> bool:
@@ -190,22 +182,31 @@ def _build_cues_from_cutpoints(
     return cues, prev_e
 
 
+_RETRY_BACKOFF_SECONDS = (1.0, 2.0, 4.0)
+
+
 def _request_cutpoints(
     events_for_request: List[FlatEvent],
     call_llm: CallLLM,
     lang: Optional[str],
     max_retries: int,
 ) -> Optional[List[int]]:
+    """请求 AI 切分点。
+
+    - 网络/接口异常：按 ``_RETRY_BACKOFF_SECONDS`` 指数退避重试，最多
+      ``max_retries`` 次（默认 ``temperature=0`` 下解析失败重试无效，因此
+      解析失败不重试，直接返回 ``None`` 交给调用方降级）。
+    """
     indexed = build_indexed_events(events_for_request)
     messages = build_ai_segment_messages(indexed, lang)
-    for _ in range(max(1, max_retries)):
+    for attempt in range(max(1, max_retries)):
         try:
             content = call_llm(messages)
-        except Exception:  # noqa: BLE001 - 网络/接口异常统一触发重试
+        except Exception:  # noqa: BLE001 - 网络/接口异常触发退避重试
+            if attempt + 1 < max(1, max_retries):
+                time.sleep(_RETRY_BACKOFF_SECONDS[min(attempt, len(_RETRY_BACKOFF_SECONDS) - 1)])
             continue
-        parsed = parse_ai_segments(content)
-        if parsed is not None:
-            return parsed
+        return parse_ai_segments(content)
     return None
 
 
@@ -214,6 +215,7 @@ def _process_chunk(
     call_llm: CallLLM,
     lang: Optional[str],
     max_retries: int,
+    tail_retry: bool = False,
 ) -> List[Cue]:
     cutpoints = _request_cutpoints(chunk, call_llm, lang, max_retries)
     if cutpoints is None:
@@ -223,16 +225,19 @@ def _process_chunk(
     if covered_end == len(chunk) - 1:
         return cues
 
-    # 未覆盖到分块末尾：只对剩余部分重试一次，再退回规则断句兜底。
     remainder_start = covered_end + 1
     remainder = chunk[remainder_start:]
-    tail_cutpoints = _request_cutpoints(remainder, call_llm, lang, max_retries)
-
     leftover_start = 0
-    if tail_cutpoints is not None:
-        tail_cues, tail_covered_end = _build_cues_from_cutpoints(tail_cutpoints, remainder, lang)
-        cues.extend(tail_cues)
-        leftover_start = tail_covered_end + 1
+    if tail_retry:
+        # 未覆盖到分块末尾：只对剩余部分重试一次，再退回规则断句兜底。
+        # 默认关闭：temperature=0 的确定性模型重试结果基本不变，纯浪费一次请求。
+        tail_cutpoints = _request_cutpoints(remainder, call_llm, lang, max_retries)
+        if tail_cutpoints is not None:
+            tail_cues, tail_covered_end = _build_cues_from_cutpoints(
+                tail_cutpoints, remainder, lang
+            )
+            cues.extend(tail_cues)
+            leftover_start = tail_covered_end + 1
 
     if leftover_start < len(remainder):
         cues.extend(format_subtitles(remainder[leftover_start:], lang))
@@ -248,11 +253,12 @@ def ai_format_subtitles(
     api_key: Optional[str] = None,
     model: str = DEFAULT_MODEL,
     base_url: str = DEFAULT_BASE_URL,
-    max_chunk_chars: int = 3000,
+    max_chunk_chars: int = 2000,
     max_retries: int = 3,
     temperature: float = 0.0,
-    timeout: int = 60,
+    timeout: int = 180,
     concurrency: int = 8,
+    tail_retry: Optional[bool] = None,
     progress: Optional[Callable[[int, int], None]] = None,
 ) -> List[Cue]:
     """AI 断句主入口：只产出 ``{start, end, text}``，不含翻译。
@@ -261,6 +267,10 @@ def ai_format_subtitles(
     cues 统一跑一次 ``translate_cues``。分块之间互不依赖，用 ``concurrency``
     个线程并发请求缩短多分块视频的总耗时；``progress(done, total)`` 按完成
     顺序（而非提交顺序）回调，用于上报断句进度。
+
+    ``tail_retry`` 控制"切分点未覆盖到分块末尾时，对剩余部分补一次请求"：
+    ``None``（默认）时由 ``temperature`` 决定——``temperature=0`` 的确定性
+    模型补试结果基本不变，纯浪费，故关闭；``temperature>0`` 时保留该兜底。
     """
     if not flat_events:
         return []
@@ -274,13 +284,16 @@ def ai_format_subtitles(
         timeout=timeout,
     )
 
+    if tail_retry is None:
+        tail_retry = temperature > 0
+
     chunks = chunk_events(flat_events, max_chunk_chars)
     total = len(chunks)
     if total == 0:
         return []
 
     def _one(i: int) -> Any:
-        return i, _process_chunk(chunks[i], call_llm, lang, max_retries)
+        return i, _process_chunk(chunks[i], call_llm, lang, max_retries, tail_retry)
 
     results: List[Optional[List[Cue]]] = [None] * total
     done = 0

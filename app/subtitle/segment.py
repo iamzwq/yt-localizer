@@ -123,10 +123,17 @@ def format_subtitles(
     flat_events: List[FlatEvent],
     lang: Optional[str],
     long_sentence_threshold: int = 100,
+    long_sentence_max_words: int = 15,
 ) -> List[Cue]:
     """规则断句主入口，按语言特性自适应分段。
 
     ``long_sentence_threshold`` 默认 100，与原插件设置项一致（原纯函数默认 120）。
+    ``long_sentence_max_words`` 默认 15，与 ``process_subtitles`` 的词数上限一致。
+
+    词数维度是二次拆分的补充触发条件：无标点 ASR 文本在首次扫描时词数上限不
+    生效（``process_subtitles`` 的 ``is_word_limit_exceeded`` 依赖逗号/use_pause），
+    导致 15-20 词的长句整条保留。这里在二次拆分阶段补上：字符数超限或词数超限
+    任一成立即触发 ``use_pause=True`` 的语义二次拆分（在连词处切，比硬切更自然）。
     """
     if not flat_events:
         return []
@@ -175,7 +182,11 @@ def format_subtitles(
 
     result: List[Cue] = []
     for sub in subtitles:
-        if len(sub["text"]) > long_sentence_threshold:
+        # 字符数或词数超限都视为长句，触发 use_pause=True 的二次语义拆分。
+        if (
+            len(sub["text"]) > long_sentence_threshold
+            or _word_count(sub["text"]) > long_sentence_max_words
+        ):
             sub_events = [
                 e for e in flat_events if sub["start"] <= e["start"] < sub["end"]
             ]

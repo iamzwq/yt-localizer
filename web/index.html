@@ -293,9 +293,7 @@
       <header class="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 class="text-2xl font-semibold section-title">YouTube 视频中文化工具</h1>
-          <p class="mt-1 text-sm helper-text">
-            粘贴视频链接，自动获取字幕、翻译并烧录导出中文视频
-          </p>
+          <p class="mt-1 text-sm helper-text">粘贴视频链接，自动获取字幕、翻译并烧录导出中文视频</p>
         </div>
         <button
           id="clear-cache-btn"
@@ -327,17 +325,12 @@
               <span class="switch-label">翻译成中文</span>
             </label>
             <label id="ai-segment-wrap" class="switch-wrap">
-              <input id="ai-segment-check" type="checkbox" class="switch-input" checked />
+              <input id="ai-segment-check" type="checkbox" class="switch-input" />
               <span class="switch-track"><span class="switch-thumb"></span></span>
               <span class="switch-label">AI 智能断句（更贴合语义，消耗更多 token）</span>
             </label>
             <label class="switch-wrap">
-              <input
-                id="auto-export-check"
-                type="checkbox"
-                class="switch-input"
-                checked
-              />
+              <input id="auto-export-check" type="checkbox" class="switch-input" checked />
               <span class="switch-track"><span class="switch-thumb"></span></span>
               <span class="switch-label">自动烧录导出并下载</span>
             </label>
@@ -386,10 +379,7 @@
 
               <div
                 class="mt-3 flex items-center gap-3 rounded-lg p-3"
-                style="
-                  background: var(--color-surface-alt);
-                  border: 1px solid var(--color-border);
-                "
+                style="background: var(--color-surface-alt); border: 1px solid var(--color-border)"
               >
                 <img
                   id="meta-thumbnail"
@@ -412,15 +402,10 @@
             <!-- 样式设置 -->
             <div class="space-y-5">
               <div>
-                <h3
-                  class="mb-2 text-xs font-semibold uppercase tracking-wide helper-text"
-                >
+                <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide helper-text">
                   预览语言
                 </h3>
-                <select
-                  id="preview-mode"
-                  class="select w-full rounded-lg px-2 py-1.5 text-sm"
-                >
+                <select id="preview-mode" class="select w-full rounded-lg px-2 py-1.5 text-sm">
                   <option value="bilingual">双语</option>
                   <option value="translated" selected>中文</option>
                   <option value="original">原文</option>
@@ -428,9 +413,7 @@
               </div>
 
               <div>
-                <h3
-                  class="mb-2 text-xs font-semibold uppercase tracking-wide helper-text"
-                >
+                <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide helper-text">
                   字体样式
                 </h3>
 
@@ -448,12 +431,7 @@
 
                 <div class="mb-3 flex items-center justify-between text-xs field-label">
                   <span>文字颜色</span>
-                  <input
-                    id="text-color"
-                    type="color"
-                    value="#ffffff"
-                    class="color-input"
-                  />
+                  <input id="text-color" type="color" value="#ffffff" class="color-input" />
                 </div>
 
                 <div class="mb-3 flex items-center justify-between text-xs field-label">
@@ -502,10 +480,7 @@
               <span class="option-title">原声版</span>
               <span class="option-desc">仅烧录字幕，保留视频原声</span>
             </button>
-            <button
-              id="export-both"
-              class="option-card option-primary disabled:opacity-50"
-            >
+            <button id="export-both" class="option-card option-primary disabled:opacity-50">
               <span class="option-title">原声 + 中文配音</span>
               <span class="option-desc">一次导出两个版本，含 AI 配音</span>
             </button>

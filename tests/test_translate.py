@@ -72,11 +72,37 @@ def test_parse_translation_response_rejects_garbage():
     assert parse_translation_response("", 2) is None
 
 
+def test_parse_translation_response_extracts_object_array():
+    """模型偶发返回对象数组（带 translate 键）时提取译文值。"""
+    content = '[{"translate": "你好"}, {"translate": "世界"}]'
+    assert parse_translation_response(content, 2) == ["你好", "世界"]
+
+
+def test_parse_translation_response_extracts_object_array_translation_key():
+    content = '[{"translation": "你好"}, {"translation": "世界"}]'
+    assert parse_translation_response(content, 2) == ["你好", "世界"]
+
+
+def test_parse_translation_response_rejects_object_without_text_key():
+    content = '[{"foo": "你好"}, {"foo": "世界"}]'
+    assert parse_translation_response(content, 2) is None
+
+
 def test_build_messages_shape():
     messages = build_messages(["hello"], context="tech talk")
     assert messages[0]["role"] == "system"
     assert "tech talk" in messages[0]["content"]
     assert messages[1]["content"] == '["hello"]'
+
+
+def test_build_messages_translates_algorithm_terms():
+    """prompt 应要求算法/数据结构术语翻译成中文，而非无条件保留英文。"""
+    messages = build_messages(["binary search"], context=None)
+    content = messages[0]["content"]
+    assert "二分查找" in content          # 明确要求 binary search → 二分查找
+    assert "recursion" in content and "递归" in content
+    # 仍保留代码标识符/产品名不翻译的规则
+    assert "Python" in content and "npm install" in content
 
 
 def test_translate_batch_success():

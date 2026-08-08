@@ -172,8 +172,8 @@ def test_ai_format_subtitles_falls_back_when_ai_returns_garbage():
         events, "en", call_llm=call_llm, max_chunk_chars=10000, max_retries=2
     )
     assert cues == format_subtitles(events, "en")
-    # 整块解析完全失败时不会再触发尾部重试，只重试 max_retries 次。
-    assert calls["n"] == 2
+    # 解析失败在 temperature=0 下重试无效，只调用一次即降级。
+    assert calls["n"] == 1
 
 
 def test_ai_format_subtitles_falls_back_when_cutpoint_out_of_range():
@@ -197,7 +197,10 @@ def test_ai_format_subtitles_partial_coverage_then_tail_succeeds():
             return json.dumps([1])
         return json.dumps([1])
 
-    cues = ai_format_subtitles(events, "en", call_llm=call_llm, max_chunk_chars=10000)
+    # 显式 temperature>0：尾部重试开启，验证该路径仍可用。
+    cues = ai_format_subtitles(
+        events, "en", call_llm=call_llm, max_chunk_chars=10000, temperature=0.7
+    )
     assert calls["n"] == 2
     assert cues == [
         {"start": 0, "end": 1000, "text": "Hello world."},
@@ -214,8 +217,50 @@ def test_ai_format_subtitles_partial_coverage_tail_fails_falls_back_for_remainde
             return json.dumps([1])
         return "still garbage"
 
-    cues = ai_format_subtitles(events, "en", call_llm=call_llm, max_chunk_chars=10000, max_retries=1)
+    # 显式 temperature>0：尾部重试开启，验证补试失败后仅剩余部分降级。
+    cues = ai_format_subtitles(
+        events, "en", call_llm=call_llm, max_chunk_chars=10000, max_retries=1, temperature=0.7
+    )
     assert cues[0] == {"start": 0, "end": 1000, "text": "Hello world."}
     remainder = events[2:]
     assert cues[1:] == format_subtitles(remainder, "en")
+
+
+def test_ai_format_subtitles_temperature_zero_skips_tail_retry():
+    """temperature=0（默认）时部分覆盖不再补试，剩余部分直接规则断句降级。"""
+    events = _hello_world_events()
+    calls = {"n": 0}
+
+    def call_llm(_messages):
+        calls["n"] += 1
+        return json.dumps([1])
+
+    cues = ai_format_subtitles(events, "en", call_llm=call_llm, max_chunk_chars=10000)
+    assert calls["n"] == 1
+    assert cues[0] == {"start": 0, "end": 1000, "text": "Hello world."}
+    remainder = events[2:]
+    assert cues[1:] == format_subtitles(remainder, "en")
+
+
+def test_ai_format_subtitles_network_error_retries_with_backoff(monkeypatch):
+    """网络异常保留重试，且按指数退避 sleep（解析失败才不重试）。"""
+    events = _hello_world_events()
+    sleeps = []
+    monkeypatch.setattr("app.subtitle.ai_segment.time.sleep", sleeps.append)
+
+    calls = {"n": 0}
+
+    def call_llm(_messages):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise ConnectionError("boom")
+        return json.dumps([1, 3])
+
+    cues = ai_format_subtitles(events, "en", call_llm=call_llm, max_chunk_chars=10000, max_retries=3)
+    assert calls["n"] == 3
+    assert sleeps == [1.0, 2.0]  # 前两次失败各退避一次
+    assert cues == [
+        {"start": 0, "end": 1000, "text": "Hello world."},
+        {"start": 1100, "end": 2000, "text": "Next one."},
+    ]
 

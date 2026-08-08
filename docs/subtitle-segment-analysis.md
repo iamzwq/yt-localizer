@@ -35,11 +35,15 @@
 
 ## 3. `format_subtitles` 的二次拆分逻辑
 
-仅对**空格语言**分支生效：先跑一遍 `process_subtitles` 得到句子，再对超过 `long_sentence_threshold`（默认 100，函数签名默认 100，注释提及原插件默认 120）的长句：
+仅对**空格语言**分支生效：先跑一遍 `process_subtitles` 得到句子，再对**长句**做二次拆分：
 
 1. 取回该句子时间范围内的原始词级事件（`sub["start"] <= e["start"] < sub["end"]`）
 2. 若词数 > 1，用 `use_pause=True` 重新跑一遍状态机做更激进的拆分（依赖逻辑连词）
 3. 否则（只有 1 个词，无法再拆）原样保留
+
+**长句判定（v3.1 改动）**：`len(text) > long_sentence_threshold`（默认 100）**或** `_word_count(text) > long_sentence_max_words`（默认 15，与 `process_subtitles` 的词数上限一致）。
+
+改动原因：首次扫描（`use_pause=False`）时 `process_subtitles` 的词数上限依赖逗号/`use_pause` 才生效，无标点 ASR 文本（YouTube 自动字幕的常态）下 15-20 词的长句整条保留。词数维度让这类长句也进入二次拆分，在连词处切分而非硬切。实测（真实 manifest 重建数据）：最长字幕 20 → 15 词，条数 227 → 252（+11%），无过度切分。
 
 ## 观察到的问题点
 
@@ -55,6 +59,8 @@
 - 特效符号开头独立成句（`test_process_subtitles_starts_with_sign_breaks`）
 - CJK 标点/长度断句（`test_format_subtitles_cjk_breaks_on_length_and_punct`）
 - 长句二次拆分（`test_format_subtitles_splits_long_sentence`）
+- 无标点词数超限触发二次拆分（`test_format_subtitles_splits_on_word_count_without_punctuation`）
+- 短句不误切（`test_format_subtitles_keeps_short_word_count_sentence`）
 - 质量检测（`test_is_quality_poor`）
 
 整体测试覆盖了主要分支，逻辑清晰，仅靠正则 + 简单状态机实现，无外部依赖，性能和可维护性较好。
